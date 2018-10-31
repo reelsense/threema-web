@@ -17,23 +17,22 @@
 
 // tslint:disable:max-line-length
 
+import {bufferToUrl, logAdapter} from '../helpers';
+
 /**
  * Support uploading and resizing avatar
  */
 export default [
-    '$window',
-    '$timeout',
-    '$translate',
-    '$filter',
     '$log',
-    '$mdDialog',
-    function($window, $timeout: ng.ITimeoutService, $translate, $filter: any, $log: ng.ILogService, $mdDialog) {
+    function($log: ng.ILogService) {
         return {
             restrict: 'EA',
             scope: {
                 onChange: '=',
             },
             link(scope: any, element, attrs, controller) {
+                const logTag: string = '[AvatarEditorDirective]';
+
                 // Constants
                 const DRAGOVER_CSS_CLASS = 'is-dragover';
                 const VIEWPORT_SIZE = 220;
@@ -47,11 +46,11 @@ export default [
                 const enabled = scope.enabled === undefined || scope.enabled === true;
 
                 let croppieInstance = null;
-                let initCroppie = () => {
+                const initCroppie = () => {
                     if (croppieInstance !== null) {
                         return croppieInstance;
                     }
-                    croppieInstance = new Croppie(element[0].querySelector('.croppie-container'), {
+                    croppieInstance = new Croppie(element[0].querySelector('.croppie-target'), {
                         viewport: {
                             type: 'square',
                             width: VIEWPORT_SIZE,
@@ -64,16 +63,17 @@ export default [
                                 clearTimeout(updateTimeout);
                             }
 
-                            updateTimeout = setTimeout(() => {
+                            updateTimeout = self.setTimeout(() => {
                                 croppieInstance.result({
                                     type: 'blob',
                                     // max allowed size on device
                                     size: [512, 512],
-                                    circle: 'false',
+                                    circle: false,
+                                    format: 'png',
                                 })
                                     .then((blob: Blob) => {
                                         const fileReader = new FileReader();
-                                        fileReader.onload = function () {
+                                        fileReader.onload = function() {
                                             scope.onChange(this.result);
                                         };
                                         fileReader.readAsArrayBuffer(blob);
@@ -100,21 +100,20 @@ export default [
                 function fetchFileContent(file: File): Promise<ArrayBuffer> {
                     return new Promise((resolve, reject) => {
                         const reader = new FileReader();
-                        reader.onload = (ev: Event) => {
-                            resolve((ev.target as FileReader).result);
+                        reader.onload = function(ev: FileReaderProgressEvent) {
+                            resolve(ev.target.result);
                         };
-                        reader.onerror = (ev: ErrorEvent) => {
+                        reader.onerror = function(ev: FileReaderProgressEvent) {
                             // set a null object
                             reject(ev);
                         };
-                        reader.onprogress = function (data) {
-                            if (data.lengthComputable) {
+                        reader.onprogress = function(ev: FileReaderProgressEvent) {
+                            if (ev.lengthComputable) {
                                 // TODO implement progress?
                                 // let progress = ((data.loaded / data.total) * 100);
                             }
                         };
                         reader.readAsArrayBuffer(file);
-
                     });
                 }
 
@@ -124,11 +123,10 @@ export default [
                     }
                     // get first
                     fetchFileContent(fileList[0]).then((data: ArrayBuffer) => {
-                        let image = $filter('bufferToUrl')(data, 'image/jpg');
+                        const image = bufferToUrl(data, 'image/jpeg', logAdapter($log.warn, logTag));
                         setImage(image);
-
                     }).catch((ev: ErrorEvent) => {
-                        $log.error('Could not load file:', ev.message);
+                        $log.error(logTag, 'Could not load file:', ev.message);
                     });
                 }
 
@@ -188,15 +186,16 @@ export default [
 
                     loading(true);
                     // load image to calculate size
-                    let img = new Image();
-                    img.addEventListener('load', function () {
-                        // hack to fix typescript undefined method (width) exception
-                        let w = (this as any).naturalWidth;
-                        let h = (this as any).naturalHeight;
-                        let size = Math.min(w, h);
+                    const img = new Image();
+                    img.addEventListener('load', function() {
+                        $log.debug(logTag, 'Image loaded');
+
+                        const w = this.naturalWidth;
+                        const h = this.naturalHeight;
+                        const size = Math.min(w, h);
 
                         // set to center
-                        let imageSize = [
+                        const imageSize = [
                             (w - size) / 2,
                             (h - size) / 2,
                             size,
@@ -207,7 +206,8 @@ export default [
                             points: imageSize,
                         }).then(() => {
                             loading(false);
-                        }).catch(() => {
+                        }).catch((e) => {
+                            $log.error(logTag, 'Could not bind avatar preview:', e);
                             loading(false);
                         });
 
@@ -216,8 +216,9 @@ export default [
                         }
                     });
 
-                    img.addEventListener('error', function () {
+                    img.addEventListener('error', function(e) {
                         // this is not a valid image
+                        $log.error(logTag, 'Could not load image:', e);
                         loading(false);
                     });
 
@@ -251,9 +252,9 @@ export default [
             },
             template: `
                 <div class="avatar-editor">
-                    <div class="avatar-editor-drag croppie-container"></div>
-                    <div class="avatar-editor-navigation"  layout="column" layout-wrap layout-margin layout-align="center center">
-                        <input class="file-input" type="file" style="visibility: hidden" multiple/>
+                    <div class="avatar-editor-drag croppie-target"></div>
+                    <div class="avatar-editor-navigation" layout="column" layout-wrap layout-margin layout-align="center center">
+                        <input class="file-input" type="file" style="visibility: hidden" multiple>
                           <md-button type="submit" class="file-trigger md-raised">
                             <span translate>messenger.UPLOAD_AVATAR</span>
                            </md-button>

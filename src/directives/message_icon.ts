@@ -15,6 +15,8 @@
  * along with Threema Web. If not, see <http://www.gnu.org/licenses/>.
  */
 
+import {hasValue} from '../helpers';
+
 export default [
     function() {
         return {
@@ -22,6 +24,18 @@ export default [
             scope: {},
             bindToController: {
                 message: '=eeeMessage',
+            },
+            link: function(scope, elem, attrs) {
+                scope.$watch(
+                    () => scope.ctrl.message.id,
+                    (newId, oldId) => {
+                        // Register for message changes. When the ID changes, update the icon.
+                        // This prevents processing the message more than once.
+                        if (hasValue(newId) && newId !== oldId) {
+                            scope.ctrl.update();
+                        }
+                    },
+                );
             },
             controllerAs: 'ctrl',
             controller: [function() {
@@ -37,6 +51,9 @@ export default [
                         case 'location':
                             return 'ic_location_on_24px.svg';
                         case 'file':
+                            if (this.message.file.type === 'image/gif') {
+                                return 'ic_image_24px.svg';
+                            }
                             return 'ic_insert_drive_file_24px.svg';
                         case 'ballot':
                             return 'ic_poll_24px.svg';
@@ -44,10 +61,18 @@ export default [
                             return null;
                     }
                 };
-                this.icon = getIcon(this.message.type);
+
+                this.update = () => {
+                    this.icon = getIcon(this.message.type);
+                    this.altText = this.message.type + ' icon';
+                };
+
+                this.$onInit = function() {
+                    this.update();
+                };
             }],
             template: `
-                <img ng-if="ctrl.icon !== null" ng-src="img/{{ ctrl.icon }}" alt="{{ ctrl.message.type }} icon">
+                <img ng-if="ctrl.icon !== null" ng-src="img/{{ ctrl.icon }}" alt="{{ ctrl.altText }}">
             `,
         };
     },

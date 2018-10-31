@@ -1,5 +1,8 @@
 # Releasing
 
+Major release with backwards incompatible changes? Check for `TODO` comments
+with deprecations. Remove them if possible.
+
 Set variables:
 
     $ export VERSION=X.Y.Z
@@ -8,8 +11,11 @@ Set variables:
 Update version numbers:
 
     $ vim -p package.json
-    $ rm npm-shrinkwrap.json
-    $ npm shrinkwrap
+    $ npm install
+
+Update changelog:
+
+    $ vim CHANGELOG.md
 
 Commit & tag:
 

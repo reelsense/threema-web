@@ -1,29 +1,43 @@
 # Threema Web
 
 [![Build status](https://circleci.com/gh/threema-ch/threema-web.svg?style=shield&circle-token=:circle-token)](https://circleci.com/gh/threema-ch/threema-web)
-[![License](https://img.shields.io/github/license/threema-ch/threema-web.svg)](https://github.com/threema-ch/threema-web/blob/master/LICENSE.txt)
+[![License](https://img.shields.io/badge/License-AGPLv3-blue.svg)](https://github.com/threema-ch/threema-web/blob/master/LICENSE.txt)
 
 Threema Web is a web client for Threema, a privacy-focussed end-to-end
 encrypted mobile messenger hosted and developed in Switzerland. With Threema
 Web, you can use Threema on your Desktop without compromising security.
 
+[https://web.threema.ch/](https://web.threema.ch/)
+
 ![Screenshot](https://threema.ch/images/webclient_header.png)
 
-Threema Web establishes a direct connection between Desktop and mobile device
-using [WebRTC](https://webrtc.org/). Signaling is end-to-end encrypted with
-[SaltyRTC](https://saltyrtc.org/). If both devices are in the same network, no
-server is involved when synchronizing messages between the devices, and the
-digital footprint is reduced to the bare minimum.
+Threema Web establishes a connection between Desktop and mobile device using
+[WebRTC](https://webrtc.org/) (Android) or encrypted WebSockets (iOS).
+Signaling and data is end-to-end encrypted with [SaltyRTC](https://saltyrtc.org/).
 
-For more information, see the [Threema Web
-Whitepaper](https://threema.ch/en/blog/posts/threema-web-whitepaper).
+For more information, see the [Threema Cryptography
+Whitepaper](https://threema.ch/press-files/2_documentation/cryptography_whitepaper.pdf).
+
+
+## Bug Reports and Feature Requests
+
+If you find a bug in Threema Web or want to request a new feature, feel free to
+[open an issue](https://github.com/threema-ch/threema-web/issues/new) on
+GitHub. Please make sure that your bug report or feature request hasn't already
+been filed by using the search function.
+
+Express your personal opinion regarding priority by reacting with :+1: in a
+particular issue, such as [this one](https://github.com/threema-ch/threema-web/issues/58).
+We will factor this in when scheduling what to do next.
 
 
 ## Development
 
 Threema Web is written using [TypeScript](https://www.typescriptlang.org/) and
 [AngularJS 1](https://www.angularjs.org/). Dependencies are managed with
-[npm](https://www.npmjs.com/).
+[npm](https://www.npmjs.com/). You currently need Node.js 8 or later to build
+Threema Web. (Note that Node.js is only a build dependency, the result is plain
+old client-side JavaScript.)
 
 Install development dependencies:
 
@@ -31,11 +45,11 @@ Install development dependencies:
 
 Run the dev server:
 
-    npm run serve:live
+    npm run devserver
 
 Then open the URL in your browser:
 
-    chromium http://localhost:9966
+    firefox http://localhost:9966
 
 *(Note that this setup should not be used in production. To run Threema
 Web on a server, please follow the instructions at
@@ -46,8 +60,8 @@ Web on a server, please follow the instructions at
 
 To run tests:
 
-    npm run build
-    chromium tests/testsuite.html
+    npm run build && npm run build:tests
+    firefox tests/testsuite.html
 
 To run linting checks:
 
@@ -67,6 +81,10 @@ The configuration of Threema Web can be tweaked in `src/config.ts`:
 
 - `SELF_HOSTED`: Set this to `true` if this instance of Threema Web isn't being
   hosted on `web.threema.ch`.
+- `PREV_PROTOCOL_LAST_VERSION`: When the Threema Web protocol version changes,
+  this can be set to the last version of Threema Web that supported  the
+  previous protocol version. If set to something different than `null`, a
+  message will be shown to the user if reconnecting fails.
 
 **SaltyRTC**
 
@@ -80,8 +98,7 @@ The configuration of Threema Web can be tweaked in `src/config.ts`:
 
 **ICE**
 
-- `SALTYRTC_STUN`: Configuration object for the WebRTC STUN server.
-- `SALTYRTC_TURN`: Configuration object for the WebRTC TURN server.
+- `ICE_SERVERS`: Configuration object for the WebRTC STUN and ICE servers.
 
 **Push**
 
@@ -123,9 +140,11 @@ keybase](https://keybase.io/threema).
 
 ## License
 
+Threema Web license:
+
     Threema Web.
 
-    Copyright © 2016-2017 Threema GmbH (https://threema.ch/).
+    Copyright © 2016-2018 Threema GmbH (https://threema.ch/).
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU Affero General Public License as
@@ -139,3 +158,5 @@ keybase](https://keybase.io/threema).
 
     You should have received a copy of the GNU Affero General Public License
     along with this program. If not, see <http://www.gnu.org/licenses/>.
+
+For third party library licenses, see `LICENSE-3RD-PARTY.txt`.

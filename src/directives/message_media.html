@@ -1,74 +1,94 @@
 <!-- Thumbnail -->
 <!-- Images, Gifs & Videos -->
-<span class="in-view-indicator" in-view="ctrl.thumbnailInView($inview)"></span>
-<div ng-if="ctrl.showThumbnail" class="thumbnail {{ctrl.type}}" ng-click="ctrl.download()" ng-style="ctrl.thumbnailStyle">
 
-    <div class="loading-wrapper" ng-class="{active: ctrl.downloading || ctrl.thumbnailDownloading}">
-        <div class="loading"></div>
-        <div class="loading-text" translate>messenger.DOWNLOADING</div>
-    </div>
-    <div class="overlay video" ng-if="ctrl.type === 'video' && !ctrl.downloading">
-        <i class="material-icons md-light">play_circle_outline</i>
-    </div>
-    <div class="overlay gif" ng-if="ctrl.type === 'file' && ctrl.message.file.type === 'image/gif' && !ctrl.downloading">
-        <i class="material-icons md-light">play_circle_outline</i>
-    </div>
-    <img ng-if="ctrl.thumbnail !== null" ng-src="{{ctrl.thumbnail}}">
-    <div ng-if="ctrl.message.thumbnail != undefined" class="thumbnail-loader">
-        <img ng-src="{{ ctrl.message.thumbnail.preview | bufferToUrl: 'image/png' }}">
+<div ng-if="ctrl.uploading">
+    <!-- Loading indicator -->
+    <div class="circle active center">
+        <i class="material-icons md-24">file_upload</i>
+        <div class="loading active"></div>
     </div>
 </div>
+<div ng-if="!ctrl.uploading">
+    <div ng-if="ctrl.showThumbnail" class="thumbnail {{ ctrl.type }}" ng-click="ctrl.download()" ng-style="ctrl.thumbnailStyle">
 
-<!-- Location -->
-<location ng-if="ctrl.type === 'location'" location="ctrl.location"></location>
+        <!-- Loading indicator -->
+        <div class="loading-wrapper" ng-class="{active: ctrl.isDownloading()}">
+            <div class="loading"></div>
+            <div class="loading-text" translate>messenger.DOWNLOADING</div>
+        </div>
 
-<!-- Audio file -->
-<div class="file-message" ng-if="ctrl.type === 'audio'">
-    <! -- Loading indicator -->
-    <div class="circle" ng-click="ctrl.download()"
-         ng-class="{active: !ctrl.downloading}"
-         ng-if="!ctrl.downloaded">
-        <i class="material-icons md-24">file_download</i>
-        <div class="loading" ng-class="{active: ctrl.downloading}"></div>
+        <!-- Thumbnail overlays for videos and GIFs -->
+        <div class="overlay video" ng-if="ctrl.type === 'video' && !ctrl.isDownloading()">
+            <i class="material-icons md-light">play_circle_outline</i>
+        </div>
+        <div class="overlay gif" ng-if="ctrl.type === 'file' && ctrl.message.file.type === 'image/gif' && !ctrl.isDownloading()">
+            <i class="material-icons md-light">play_circle_outline</i>
+        </div>
+
+        <!-- Thumbnails -->
+        <span class="in-view-indicator" ng-if="ctrl.type !== 'location'" in-view="ctrl.thumbnailInView($inview)"></span>
+        <img ng-if="ctrl.thumbnail" ng-src="{{ ctrl.thumbnail }}">
+        <div ng-if="ctrl.message.thumbnail && !ctrl.thumbnail" class="thumbnail-loader">
+            <img ng-src="{{ ctrl.getThumbnailPreviewUri() }}">
+        </div>
+
     </div>
-    <! -- Play Indicator -->
-    <div class="circle" ng-click="ctrl.download()" ng-if="ctrl.downloaded">
-        <i class="material-icons md-24">play_arrow</i>
+
+    <!-- Location -->
+    <location ng-if="ctrl.type === 'location'" location="ctrl.location" ng-click="ctrl.openMapLink()"></location>
+
+    <!-- Audio file -->
+    <div class="file-message" ng-if="ctrl.type === 'audio'" ng-click="ctrl.download()">
+        <!-- Loading indicator -->
+        <div class="circle"
+             ng-class="{active: !ctrl.isDownloading()}"
+             ng-if="!ctrl.downloaded">
+            <i class="material-icons md-24">file_download</i>
+            <div class="loading" ng-class="{active: ctrl.isDownloading()}"></div>
+        </div>
+        <!-- Play Indicator -->
+        <div class="circle" ng-if="ctrl.downloaded">
+            <i class="material-icons md-24">play_arrow</i>
+        </div>
+        <div class="info" translate>messageTypes.AUDIO_MESSAGE</div>
     </div>
-    <div class="info" translate>messageTypes.AUDIO_MESSAGE</div>
+
+    <!-- Anim GIF -->
+    <div class="animgif" ng-if="ctrl.downloaded && ctrl.isAnimGif">
+        <img ng-src="{{ ctrl.blobBufferUrl }}">
+    </div>
+
+    <!-- Other file messages -->
+    <div class="file-message" ng-if="ctrl.type === 'file' && !ctrl.isAnimGif" ng-click="ctrl.download()">
+
+        <!-- Loading indicator -->
+        <div class="circle"
+             ng-class="{active: !ctrl.isDownloading()}"
+             ng-if="!ctrl.downloaded"
+             ng-style="{'background-image': 'url({{ ctrl.getThumbnailPreviewUri() }})' }">
+            <i class="material-icons md-24">file_download</i>
+            <div class="loading" ng-class="{active: ctrl.isDownloading()}"></div>
+        </div>
+
+        <!-- File type indicator -->
+        <div class="circle"
+             ng-if="ctrl.downloaded && ctrl.message.thumbnail.preview !== undefined"
+             ng-style="{'background-image': 'url({{ ctrl.getThumbnailPreviewUri() }})' }">
+        </div>
+        <div class="circle"
+             ng-if="ctrl.downloaded && ctrl.message.thumbnail.preview == undefined">
+            <img ng-src="{{ ctrl.message.file.type | mimeTypeIcon }}">
+        </div>
+
+        <!-- File information -->
+        <div class="info">
+            <p>{{ctrl.message.file.name}}</p>
+            <p>{{ctrl.message.file.type | mimeTypeLabel}}</p>
+            <p>{{ctrl.message.file.size | fileSize}}</p>
+        </div>
+
+    </div>
 </div>
-
-<!-- Anim GIF -->
-<div class="animgif" ng-if="ctrl.downloaded && ctrl.isAnimGif">
-	<img ng-src="{{ ctrl.blobBuffer | bufferToUrl: 'image/gif'}}" />
-</div>
-
-<!-- Other file messages -->
-<div class="file-message" ng-if="ctrl.type === 'file' && !ctrl.isAnimGif" ng-click="ctrl.download()">
-    <! -- Loading indicator -->
-    <div class="circle"
-         ng-class="{active: !ctrl.downloading && !ctrl.message.temporaryId}"
-         ng-if="!ctrl.downloaded"
-         ng-style="{'background-image': 'url({{ctrl.message.thumbnail.preview | bufferToUrl: 'image/png'}})' }">
-        <i class="material-icons md-24">file_download</i>
-        <div class="loading" ng-class="{active: ctrl.downloading || ctrl.message.temporaryId}"></div>
-    </div>
-    <! -- Open Indicator -->
-    <div class="circle"
-         ng-if="ctrl.downloaded && ctrl.message.thumbnail.preview !== undefined"
-         ng-style="{'background-image': 'url({{ctrl.message.thumbnail.preview | bufferToUrl: 'image/png'}})' }">
-    </div>
-
-    <div class="circle"
-         ng-if="ctrl.downloaded && ctrl.message.thumbnail.preview == undefined">
-        <img ng-src="{{ ctrl.message.file.type | mimeType: false }}"/>
-    </div>
-    <div class="info">
-        <p>{{ctrl.message.file.name}}</p>
-        <p>{{ctrl.message.file.type | mimeType: true}}</p>
-        <p>{{ctrl.message.file.size | fileSize}}</p>
-    </div>
-</div>
-
 <!-- Ballot -->
-<span ng-if="ctrl.type === 'ballot'"><em>Ballot messages are not yet supported.</em></span> <!-- TODO -->
+<span ng-if="ctrl.type === 'ballot'"><em translate>messenger.BALLOT_MESSAGES_NOT_SUPPORTED</em></span> <!-- TODO -->
+<span ng-if="ctrl.type === 'unknown'"><em translate>messenger.UNKNOWN_MESSAGE_TYPE</em></span> <!-- TODO -->

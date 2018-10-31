@@ -1,5 +1,5 @@
 /**
- * Copyright © 2016-2017 Threema GmbH (https://threema.ch/).
+ * Copyright © 2016-2018 Threema GmbH (https://threema.ch/).
  *
  * This file is part of Threema Web.
  *
@@ -17,6 +17,9 @@
  * along with Threema Web. If not, see <http://www.gnu.org/licenses/>.
  */
 
+import {AsyncEvent} from 'ts-events';
+
+import './components';
 import config from './config';
 import './controllers';
 import './directives';
@@ -24,13 +27,21 @@ import './filters';
 import './partials/messenger';
 import './partials/welcome';
 import './services';
+import {BrowserService} from './services/browser';
 import './threema/container';
+
+// Configure asynchronous events
+AsyncEvent.setScheduler(function(callback) {
+    // Replace the default setImmediate() call by a setTimeout(, 0) call
+    setTimeout(callback, 0);
+});
 
 // Create app module and set dependencies
 angular.module('3ema', [
     // Angular
     'ngAnimate',
     'ngSanitize',
+    'ngAria',
 
     // 3rd party
     'ui.router',
@@ -42,6 +53,7 @@ angular.module('3ema', [
 
     // Own
     '3ema.filters',
+    '3ema.components',
     '3ema.directives',
     '3ema.container',
     '3ema.services',
@@ -51,8 +63,8 @@ angular.module('3ema', [
 ])
 
 // Set versions
-.value('VERSION', '0.0.1')
-.value('PROTOCOL_VERSION', 1)
+.value('VERSION', '[[VERSION]]')
+.value('PROTOCOL_VERSION', 2)
 
 // Configuration object
 .constant('CONFIG', config)
@@ -62,9 +74,10 @@ angular.module('3ema', [
 
 // Constants to be used by controllers
 .constant('BROWSER_MIN_VERSIONS', {
-    FF: 47,
+    FF: 50,
     CHROME: 45,
     OPERA: 32,
+    SAFARI: 10,
 })
 
 // Set default route
@@ -113,17 +126,49 @@ angular.module('3ema', [
 .config(['$httpProvider', ($httpProvider: ng.IHttpProvider) => {
     $httpProvider.interceptors.push(['CACHE_BUST', (CACHE_BUST: string) => {
         return {
-            request: (config) => {
-                if (config.url.indexOf('partials/') !== -1 ||
-                    config.url.indexOf('directives/') !== -1 ||
-                    config.url.indexOf('i18n/') !== -1) {
-                    const separator = config.url.indexOf('?') === -1 ? '?' : '&';
-                    config.url = config.url + separator + CACHE_BUST;
+            request: (conf) => {
+                if (conf.url.indexOf('partials/') !== -1 ||
+                    conf.url.indexOf('directives/') !== -1 ||
+                    conf.url.indexOf('components/') !== -1 ||
+                    conf.url.indexOf('i18n/') !== -1) {
+                    const separator = conf.url.indexOf('?') === -1 ? '?' : '&';
+                    conf.url = conf.url + separator + CACHE_BUST;
                 }
-                return config;
+                return conf;
             },
         };
     }]);
 }])
+
+.run([
+    '$log', 'CONFIG', 'BrowserService',
+    function($log: ng.ILogService, CONFIG: threema.Config, browserService: BrowserService) {
+        // For Safari (when in DEBUG mode), monkey-patch $log to show timestamps.
+
+        if (!(CONFIG.DEBUG && browserService.getBrowser().isSafari(false))) {
+            return;
+        }
+
+        const oldLog = $log.log;
+        const oldInfo = $log.info;
+        const oldWarn = $log.warn;
+        const oldDebug = $log.debug;
+        const oldError = $log.error;
+
+        function enhanceLogging(wrapped) {
+            return function(data) {
+                const now = new Date();
+                const currentDate = `[${now.toISOString()}.${now.getMilliseconds()}]`;
+                wrapped.apply(this, [currentDate, ...arguments]);
+            };
+        }
+
+        $log.log = enhanceLogging(oldLog);
+        $log.info = enhanceLogging(oldInfo);
+        $log.warn = enhanceLogging(oldWarn);
+        $log.debug = enhanceLogging(oldDebug);
+        $log.error = enhanceLogging(oldError);
+    },
+])
 
 ;

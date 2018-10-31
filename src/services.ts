@@ -15,26 +15,34 @@
  * along with Threema Web. If not, see <http://www.gnu.org/licenses/>.
  */
 
+import {BatteryStatusService} from './services/battery';
 import {BrowserService} from './services/browser';
 import {ContactService} from './services/contact';
 import {ControllerService} from './services/controller';
 import {ControllerModelService} from './services/controller_model';
 import {FingerPrintService} from './services/fingerprint';
 import {TrustedKeyStoreService} from './services/keystore';
+import {MediaboxService} from './services/mediabox';
 import {MessageService} from './services/message';
 import {MimeService} from './services/mime';
 import {NotificationService} from './services/notification';
 import {PushService} from './services/push';
 import {QrCodeService} from './services/qrcode';
 import {ReceiverService} from './services/receiver';
+import {SettingsService} from './services/settings';
 import {StateService} from './services/state';
+import {StringService} from './services/string';
+import {TimeoutService} from './services/timeout';
 import {TitleService} from './services/title';
+import {UriService} from './services/uri';
+import {VersionService} from './services/version';
 import {WebClientService} from './services/webclient';
 
 // Create services for the controller
 angular.module('3ema.services', [])
 
 // Register services
+.service('BatteryStatusService', BatteryStatusService)
 .service('ContactService', ContactService)
 .service('ControllerModelService', ControllerModelService)
 .service('FingerPrintService', FingerPrintService)
@@ -44,10 +52,16 @@ angular.module('3ema.services', [])
 .service('QrCodeService', QrCodeService)
 .service('ReceiverService', ReceiverService)
 .service('StateService', StateService)
+.service('TimeoutService', TimeoutService)
 .service('TitleService', TitleService)
 .service('TrustedKeyStore', TrustedKeyStoreService)
 .service('WebClientService', WebClientService)
 .service('MimeService', MimeService)
 .service('BrowserService', BrowserService)
 .service('ControllerService', ControllerService)
+.service('StringService', StringService)
+.service('SettingsService', SettingsService)
+.service('MediaboxService', MediaboxService)
+.service('UriService', UriService)
+.service('VersionService', VersionService)
 ;

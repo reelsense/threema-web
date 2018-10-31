@@ -10,16 +10,15 @@
     -moz-user-select: none;
     -webkit-user-select: none;
     user-select: none;
+    pointer-events: none;
 }
 
 #main-wrapper {
     height: 100%;
     margin: 0 auto;
-    //max-width: 1500px;
     width: 98vw;
     max-width: 450px;
     max-height: 575px;
-    transition: max-width 0.8s ease-in-out;
     height: calc(100vh - #{$header-height} - #{$footer-height} - #{$main-padding} * 2 - #{$main-border-top});
     &.wide {
         max-width: 1500px;
@@ -44,7 +43,7 @@
 
     // Set min height of welcome screen
     &:not(.wide) #main {
-        min-height: 560px;
+        min-height: 620px;
         height: auto;
     }
 
@@ -90,26 +89,6 @@
 
                 > * {
                     margin-left: 8px;
-                }
-
-                // back button
-                .header-back-button {
-                    @include mouse-hand;
-                    img {
-                        transition: all 0.8s;
-                        opacity: 0.8;
-                    }
-
-                    &:hover {
-                         img {
-                                opacity: 1;
-                                width: 105%;
-                         }
-                    }
-                }
-
-                .header-avatar {
-
                 }
 
                 .header-detail {
@@ -281,11 +260,11 @@ input.threema-id {
     text-transform: uppercase;
 }
 
-a.threema-action {
+a.click-action {
     @include mouse-hand;
 }
 
-.androidonly {
+.android-ios-only {
     width: 100%;
     margin: 10px auto 0;
     background-color: white;
@@ -299,7 +278,12 @@ a.threema-action {
         vertical-align: middle;
         align-items: center;
         font-weight: 300;
+        white-space: nowrap;
         i.material-icons {
+            margin-right: 8px;
+        }
+        img {
+            height: 26px;
             margin-right: 8px;
         }
     }
@@ -315,8 +299,27 @@ a.threema-action {
 
     dd {
         word-break: normal;
-        display: block;
         margin-bottom: $main-padding*2;
+        display: block;
+
+        > .complex-values {
+            display: flex;
+            justify-items: center;
+            align-items: center;
+            flex-direction: row;
+
+            > *:not(:last-child) {
+                margin-right: $main-padding;
+            }
+            .indicator-icon {
+                $indicator-size: 18px;
+                top: 48px - $indicator-size;
+                img {
+                    width: $indicator-size;
+                    height: $indicator-size;
+                }
+            }
+        }
     }
 }
 
@@ -326,3 +329,28 @@ md-toast.md-center {
     left: 50%;
     transform: translate3d(-50%, 0, 0);
 }
+md-toast .md-toast-content {
+    span {
+        text-align: center;
+    }
+}
+
+.md-subheader {
+    background-color: transparent;
+}
+
+md-list-item .md-list-item-inner > md-checkbox .md-label {
+    display: inline-block;
+    white-space: inherit;
+}
+
+.status span {
+    display: inline;
+    line-height: 24px;
+    vertical-align: top;
+}
+
+.status-yes i { color: #4caf50; }
+.status-no i { color: #f44336; }
+.status-unknown i { color: #0277BD; }
+.small { font-size: 0.8em; font-weight: 300; }

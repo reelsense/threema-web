@@ -45,6 +45,7 @@ body {
         }
     }
 }
+
 .status-ok {
     #status-bar {
         background-color: $status-ok;
@@ -56,9 +57,6 @@ body {
 }
 
 .status-warning {
-    //#main {
-    //    border-top: 5px solid $status-warning;
-    //}
     #status-bar {
         background-color: $status-warning;
     }
@@ -77,6 +75,14 @@ body {
     }
 }
 
+// Use green warning-color for the status bar when using
+// the relayed data task (because connection loss on iOS is expected).
+.status-task-relayed-data {
+    &.status-warning #status-bar {
+        background-color: $status-ok;
+    }
+}
+
 #expanded-status-bar {
     display: flex;
     flex-direction: row;
@@ -88,8 +94,8 @@ body {
     }
 
     // Loading indicator color
-    path {
-        stroke: white !important;
+    .loading {
+        @include loading-spinner(26px, 3px, white, rgba(255, 255, 255, 0.2));
     }
 
     > div {

@@ -6,7 +6,7 @@
         margin-top: 1em;
 
         &.error {
-        color: $status-error;
+            color: $status-error;
         }
     }
 
@@ -25,6 +25,24 @@
     }
 
     .scan {
+        .ios-only-warning {
+            display: flex;
+            flex-direction: horizontal;
+            padding: 8px;
+            background-color: $status-warning;
+            margin-bottom: 16px;
+            p {
+                font-size: 0.8em;
+                letter-spacing: -0.2px;
+                line-height: 1.4em;
+                text-align: left;
+            }
+            img {
+                margin-right: 8px;
+                width: 32px;
+            }
+        }
+
         .password-entry {
             margin-top: 16px;
         }
@@ -82,6 +100,14 @@
         }
     }
 
+    .already-connected {
+        .illustration {
+            margin-top: 16px;
+            margin-bottom: 28px;
+            margin-left: 12px;
+        }
+    }
+
     .loading {
         margin-top: 48px;
 
@@ -117,6 +143,7 @@
 
             h3 {
                 margin-bottom: 8px;
+                height: 44px;
             }
 
             ul {
@@ -126,7 +153,26 @@
             .forget {
                 margin-top: 8px;
             }
+
+            .reload-btn {
+                margin: 20px 10px 0px;
+                padding: 0 10px;
+                height: 35px;
+            }
         }
     }
 
+    .notification {
+        flex-direction: horizontal;
+        padding: 8px;
+        background-color: #ff9800;
+        margin-bottom: 16px;
+        p {
+            font-size: 0.8em;
+            line-height: 1.4em;
+            font-weight: bold;
+            text-align: center;
+            width: 100%;
+        }
+    }
 }

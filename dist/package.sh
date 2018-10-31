@@ -28,15 +28,22 @@ if [ -e "release" ]; then
     done
 fi
 
+VERSION=$(grep "\"version\"" package.json  | sed 's/[[:blank:]]*\"version\": \"\([^\"]*\).*/\1/')
+
+DIR="release/threema-web-$VERSION"
+
 echo "+ Create release directory..."
-mkdir -p release/{dist,partials,directives,node_modules,partials/messenger.receiver,files}
+mkdir -p $DIR/{dist,partials,directives,components,node_modules,partials/messenger.receiver,troubleshoot}
 
 echo "+ Copy code..."
-cp -R index.html dist/ release/
-cp -R public/* release/
-cp -R src/partials/*.html release/partials/
-cp -R src/partials/messenger.receiver/*.html release/partials/messenger.receiver/
-cp -R src/directives/*.html release/directives/
+cp -R index.html $DIR/
+cp -R dist/app.js $DIR/dist/
+cp -R public/* $DIR/
+cp -R troubleshoot/* $DIR/troubleshoot/
+cp -R src/partials/*.html $DIR/partials/
+cp -R src/partials/messenger.receiver/*.html $DIR/partials/messenger.receiver/
+cp -R src/directives/*.html $DIR/directives/
+cp -R src/components/*.html $DIR/components/ 2>/dev/null || :
 
 echo "+ Copy dependencies..."
 targets=(
@@ -49,13 +56,14 @@ targets=(
     babel-es6-polyfill/browser-polyfill.min.js
     msgpack-lite/dist/msgpack.min.js
     tweetnacl/nacl-fast.min.js
-    file-saver/FileSaver.min.js
-    js-sha256/build/sha256.min.js
-    chunked-dc/dist/chunked-dc.es5.js
-    saltyrtc-client/dist/saltyrtc-client.es5.js
-    saltyrtc-task-webrtc/dist/saltyrtc-task-webrtc.es5.js
+    @saltyrtc/chunked-dc/dist/chunked-dc.es5.js
+    @saltyrtc/client/dist/saltyrtc-client.es5.js
+    @saltyrtc/task-webrtc/dist/saltyrtc-task-webrtc.es5.js
+    @saltyrtc/task-relayed-data/dist/saltyrtc-task-relayed-data.es5.js
     webrtc-adapter/out/adapter_no_edge.js
-    qrcode-generator/js/qrcode.js
+    webrtc-adapter/out/adapter.js
+    qrcode-generator/qrcode.js
+    qrcode-generator/qrcode_UTF8.js
     angular-qrcode/angular-qrcode.js
     angularjs-scroll-glue/src/scrollglue.js
     angular-material/angular-material.min.js
@@ -63,28 +71,35 @@ targets=(
     croppie/croppie.min.js
     croppie/croppie.css
     autolinker/dist/Autolinker.min.js
-    angular-ui-router/release/angular-ui-router.min.js
+    @uirouter/angularjs/release/angular-ui-router.min.js
     messageformat/messageformat.min.js
     angular-translate/dist/angular-translate.min.js
     angular-translate/dist/angular-translate-loader-static-files/angular-translate-loader-static-files.min.js
     angular-translate/dist/angular-translate-interpolation-messageformat/angular-translate-interpolation-messageformat.min.js
-    angular-inview/angular-inview.js
-    angular-messages/angular-messages.min.js
+    sdp/sdp.js
 )
 
 for target in "${targets[@]}"; do
-    install -D "node_modules/$target" "release/node_modules/$target"
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        ditto "node_modules/$target" "$DIR/node_modules/$target"
+    else
+        install -D "node_modules/$target" "$DIR/node_modules/$target"
+    fi
 done
 
 echo "+ Update version number..."
-VERSION=$(grep "\"version\"" package.json  | sed 's/\s*\"version\": \"\([^\"]*\).*/\1/')
-sed -i "s/\[\[VERSION\]\]/${VERSION}/g" release/index.html release/dist/app.js
+# Note: The `-i.bak` notation is requires so that the sed command works both on Linux
+# and on macOS: https://stackoverflow.com/q/5694228/284318
+sed -i.bak -e "s/\[\[VERSION\]\]/${VERSION}/g" $DIR/index.html $DIR/troubleshoot/index.html $DIR/dist/app.js $DIR/manifest.webmanifest $DIR/browserconfig.xml $DIR/version.txt
+rm $DIR/index.html.bak $DIR/troubleshoot/index.html.bak $DIR/dist/app.js.bak $DIR/manifest.webmanifest.bak $DIR/browserconfig.xml.bak $DIR/version.txt.bak
 
 echo "+ Update permissions..."
-find release/ -type f -exec chmod 644 {} \;
-find release/ -type d -exec chmod 755 {} \;
+find $DIR/ -type f -exec chmod 644 {} \;
+find $DIR/ -type d -exec chmod 755 {} \;
 
 echo "+ Put everything in an archive..."
-tar cfz dist/release.tar.gz release/
+cd release
+tar cfz "../dist/threema-web-$VERSION.tar.gz" $(basename "$DIR")
+cd ..
 
 echo -e "\nDone."

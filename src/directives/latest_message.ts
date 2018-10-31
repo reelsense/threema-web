@@ -15,77 +15,86 @@
  * along with Threema Web. If not, see <http://www.gnu.org/licenses/>.
  */
 
+import {getSenderIdentity} from '../helpers/messages';
+import {MessageService} from '../services/message';
+import {ReceiverService} from '../services/receiver';
+import {WebClientService} from '../services/webclient';
+
 export default [
-    'WebClientService', 'ReceiverService',
-    function(webClientService: threema.WebClientService, receiverService: threema.ReceiverService) {
+    'WebClientService', 'ReceiverService', 'MessageService', '$filter',
+    function(webClientService: WebClientService, receiverService: ReceiverService,
+             messageService: MessageService, $filter: any) {
         return {
             restrict: 'EA',
             scope: {},
             bindToController: {
-                type: '=eeeType',
-                message: '=eeeMessage',
-                receiver: '=eeeReceiver',
+                conversation: '<',
             },
             controllerAs: 'ctrl',
             controller: [function() {
-                // Utilities
-                const getIdentity = function(message) {
-                    // TODO: Get rid of duplication with eeeMessage directive
-                    if (message.isOutbox) {
-                        return webClientService.me.id;
-                    }
-                    if (message.partnerId !== null) {
-                        return message.partnerId;
-                    }
-                    return null;
-                };
+                this.$onInit = function() {
+                    // Conversation properties
+                    this.isGroup = this.conversation.type === 'group';
+                    this.isDistributionList = !this.isGroup && this.conversation.type === 'distributionList';
 
-                // Conversation properties
+                    // Voip status
+                    this.showVoipInfo = () => this.conversation.latestMessage.type === 'voipStatus';
 
-                this.isGroup = this.type as threema.ReceiverType === 'group';
-                this.isDistributionList = !this.isGroup
-                    &&  this.type as threema.ReceiverType === 'distributionList';
-
-                this.defaultStatusIcon = (this.isGroup ? 'group' : (this.isDistributionList ? 'forum' : null));
-                // this.hasContact = webClientService.contacts.has(getIdentity(this.message));
-
-                // Find sender of latest message in group chats
-                this.contact = null;
-                if (this.message) {
-                    this.contact = webClientService.contacts.get(getIdentity(this.message));
-                }
-
-                // Typing indicator
-                this.isTyping = () => false;
-                if (this.isGroup === false
-                    && this.isDitributionList === false
-                    && this.contact !== null) {
-                    this.isTyping = () => {
-                        return webClientService.isTyping(this.contact);
+                    this.getStatusIcon = () => {
+                        if (this.showVoipInfo()) {
+                            return 'phone_locked';
+                        } else if (this.isGroup) {
+                            return 'group';
+                        } else if (this.isDistributionList) {
+                            return 'forum';
+                        } else if (!this.conversation.latestMessage.isOutbox) {
+                            return 'reply';
+                        } else {
+                            const showStatusIcon = messageService.showStatusIcon(
+                                this.conversation.latestMessage,
+                                this.conversation.receiver,
+                            );
+                            return showStatusIcon ? $filter('messageStateIcon')(this.conversation.latestMessage) : null;
+                        }
                     };
-                }
 
-                this.isHidden = () => {
-                    return this.receiver.locked;
-                };
+                    // Find sender of latest message
+                    this.getContact = () => {
+                        return webClientService.contacts.get(
+                            getSenderIdentity(
+                                (this.conversation as threema.Conversation).latestMessage,
+                                webClientService.me.id,
+                            ),
+                        );
+                    };
+                    const contact = this.getContact();
 
-                // Show...
-                this.showIcon = this.message
-                    && this.message.type !== 'text'
-                    && this.message.type !== 'status';
-
-                this.getDraft = () => {
-                    if (receiverService.isConversationActive(this.receiver)) {
-                        return null;
+                    // Typing indicator
+                    this.isTyping = () => false;
+                    if (this.isGroup === false && this.isDistributionList === false && contact !== null) {
+                        this.isTyping = () => webClientService.isTyping(contact);
                     }
-                    return webClientService.getDraft(this.receiver);
-                };
 
-                this.hasDraft = () => {
-                    let draft = this.getDraft();
-                    return draft !== undefined && draft !== null;
-                };
+                    this.isHidden = () => this.conversation.receiver.locked;
 
+                    // Show...
+                    this.showIcon = () => {
+                        const message = (this.conversation as threema.Conversation).latestMessage;
+                        return message.type !== 'text' && message.type !== 'status';
+                    };
+
+                    // Drafts
+                    this.getDraft = () => webClientService.getDraft(this.conversation.receiver);
+                    this.showDraft = () => {
+                        if (receiverService.isConversationActive(this.conversation.receiver)) {
+                            // Don't show draft if conversation is active
+                            return false;
+                        }
+                        const draft = this.getDraft();
+                        return draft !== undefined && draft !== null;
+                    };
+
+                };
             }],
             templateUrl: 'directives/latest_message.html',
         };

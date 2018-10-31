@@ -18,7 +18,7 @@
 /**
  * The title service can update the window title.
  */
-export class TitleService implements threema.TitleService {
+export class TitleService {
 
     private $log: ng.ILogService;
     private $document: ng.IDocumentService;
@@ -41,7 +41,7 @@ export class TitleService implements threema.TitleService {
 
     private update(): void {
         if (this.unreadCount > 0) {
-            this.title = `${this.DEFAULT_TITLE} (${this.unreadCount})`;
+            this.title = `(${this.unreadCount}) ${this.DEFAULT_TITLE}`;
         } else {
             this.title = this.DEFAULT_TITLE;
         }

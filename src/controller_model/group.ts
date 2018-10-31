@@ -15,54 +15,67 @@
  * along with Threema Web. If not, see <http://www.gnu.org/licenses/>.
  */
 
-import {ControllerModelMode} from '../types/enums';
+import {WebClientService} from '../services/webclient';
 import {AvatarControllerModel} from './avatar';
 
-export class GroupControllerModel implements threema.ControllerModel {
+// Type aliases
+import ControllerModelMode = threema.ControllerModelMode;
+
+export class GroupControllerModel implements threema.ControllerModel<threema.GroupReceiver> {
+    private logTag = '[GroupControllerModel]';
 
     private $log: ng.ILogService;
     private $translate: ng.translate.ITranslateService;
     private $mdDialog: ng.material.IDialogService;
     public members: string[];
     public name: string;
+    public access: threema.GroupReceiverAccess;
     public subject: string;
-    public isLoading = false;
+
+    public isLoading = false; // TODO: Show loading indicator
 
     private addContactPlaceholder: string;
-    private group: threema.GroupReceiver;
-    private webClientService: threema.WebClientService;
-    private avatarController: threema.AvatarControllerModel;
+    private group: threema.GroupReceiver | null;
+    private webClientService: WebClientService;
+    private avatarController: AvatarControllerModel;
     private mode: ControllerModelMode;
-    private onRemovedCallback: any;
+    private onRemovedCallback: threema.OnRemovedCallback;
 
     constructor($log: ng.ILogService, $translate: ng.translate.ITranslateService, $mdDialog: ng.material.IDialogService,
-                webClientService: threema.WebClientService,
+                webClientService: WebClientService,
                 mode: ControllerModelMode,
-                group: threema.GroupReceiver = undefined) {
+                group?: threema.GroupReceiver) {
         this.$log = $log;
         this.$translate = $translate;
         this.$mdDialog = $mdDialog;
 
-        this.group = group;
+        if (group === undefined) {
+            if (mode !== ControllerModelMode.NEW) {
+                throw new Error('GroupControllerModel: Group may not be undefined for mode ' + mode);
+            }
+        } else {
+            this.group = group;
+        }
         this.mode = mode;
         this.webClientService = webClientService;
         this.addContactPlaceholder = $translate.instant('messenger.GROUP_SELECT_CONTACTS');
 
         switch (this.getMode()) {
             case ControllerModelMode.EDIT:
-                this.subject = $translate.instant('messenger.EDIT_RECEIVER', {
-                    receiverName: '@NAME@',
-                }).replace('@NAME@', this.group.displayName);
-                this.name = this.group.displayName;
-                this.members = this.group.members;
+                this.subject = $translate.instant('messenger.EDIT_RECEIVER');
+                this.name = this.group!.displayName;
+                this.members = this.group!.members;
                 this.avatarController = new AvatarControllerModel(
-                    this.$log, this.webClientService, this.group,
+                    this.$log, this.webClientService, this.group!,
                 );
+                this.access = this.group!.access;
                 break;
 
             case ControllerModelMode.VIEW:
-                this.subject = this.group.displayName;
-                this.members = this.group.members;
+            case ControllerModelMode.CHAT:
+                this.subject = this.group!.displayName;
+                this.members = this.group!.members;
+                this.access = this.group!.access;
                 break;
 
             case ControllerModelMode.NEW:
@@ -74,11 +87,15 @@ export class GroupControllerModel implements threema.ControllerModel {
                 break;
 
             default:
-                $log.error('Invalid controller model mode: ', this.getMode());
+                $log.error(this.logTag, 'Invalid controller model mode: ', this.getMode());
         }
     }
 
-    public setOnRemoved(callback: any): void {
+    public getMaxMemberSize(): number {
+        return this.webClientService.getMaxGroupMemberSize();
+    }
+
+    public setOnRemoved(callback: threema.OnRemovedCallback): void {
         this.onRemovedCallback = callback;
     }
 
@@ -88,23 +105,76 @@ export class GroupControllerModel implements threema.ControllerModel {
 
     public isValid(): boolean {
         return this.members.filter((identity: string) => {
-                return identity !== this.webClientService.getMyIdentity().identity;
+                return identity !== this.webClientService.me.id;
             }).length > 0;
     }
 
+    public canChat(): boolean {
+        return true;
+    }
+
     public canEdit(): boolean {
-        return this.group.access !== undefined && (
-                this.group.access.canChangeAvatar === true
-                || this.group.access.canChangeName === true
-                || this.group.access.canChangeMembers === true
+        return this.access !== undefined && (
+                this.access.canChangeAvatar === true
+                || this.access.canChangeName === true
+                || this.access.canChangeMembers === true
             );
     }
 
+    public canClean(): boolean {
+        return this.canChat();
+    }
+
+    public clean(ev: any): any {
+        const confirm = this.$mdDialog.confirm()
+            .title(this.$translate.instant('messenger.DELETE_THREAD'))
+            .textContent(this.$translate.instant('messenger.DELETE_THREAD_MESSAGE', {count: 1}))
+            .targetEvent(ev)
+            .ok(this.$translate.instant('common.YES'))
+            .cancel(this.$translate.instant('common.CANCEL'));
+
+        this.$mdDialog.show(confirm).then(() => {
+            this.reallyClean();
+        }, () => {
+            this.$log.debug('clean canceled');
+        });
+    }
+
+    private reallyClean(): any {
+        if (!this.group) {
+            this.$log.error(this.logTag, 'reallyClean: Group is null');
+            return;
+        }
+        if (!this.canClean()) {
+            this.$log.error(this.logTag, 'Not allowed to clean this group');
+            return;
+        }
+
+        this.isLoading = true;
+        this.webClientService.cleanReceiverConversation(this.group)
+            .then(() => {
+                this.isLoading = false;
+            })
+            .catch((error) => {
+                // TODO: Handle this properly / show an error message
+                this.$log.error(this.logTag, `Cleaning receiver conversation failed: ${error}`);
+                this.isLoading = false;
+            });
+    }
+
+    public canShowQr(): boolean {
+        return false;
+    }
+
     public leave(ev): void {
-        let confirm = this.$mdDialog.confirm()
+        if (!this.group) {
+            this.$log.error(this.logTag, 'leave: Group is null');
+            return;
+        }
+        const confirm = this.$mdDialog.confirm()
             .title(this.$translate.instant('messenger.GROUP_LEAVE'))
             .textContent(this.$translate.instant(
-                this.group.administrator === this.webClientService.getMyIdentity().identity
+                this.group.administrator === this.webClientService.me.id
                     ? 'messenger.GROUP_REALLY_LEAVE_ADMIN'
                     : 'messenger.GROUP_REALLY_LEAVE'))
             .targetEvent(ev)
@@ -112,31 +182,37 @@ export class GroupControllerModel implements threema.ControllerModel {
             .cancel(this.$translate.instant('common.CANCEL'));
 
         this.$mdDialog.show(confirm).then(() => {
-            this.reallyLeave();
+            this.reallyLeave(this.group!);
         }, () => {
-            this.$log.debug('leave canceled');
+            this.$log.debug(this.logTag, 'Leave canceled');
         });
     }
 
-    private reallyLeave(): void {
-        if (!this.group.access.canLeave) {
-            this.$log.error('cannot leave group');
+    private reallyLeave(group: threema.GroupReceiver): void {
+        if (!group.access.canLeave) {
+            this.$log.error(this.logTag, 'Cannot leave group');
             return;
         }
 
         this.isLoading = true;
-        this.webClientService.leaveGroup(this.group)
+        this.webClientService.leaveGroup(group)
             .then(() => {
                 this.isLoading = false;
             })
-            .catch(() => {
+            .catch((error) => {
+                // TODO: Handle this properly / show an error message
+                this.$log.error(`Leaving group failed: ${error}`);
                 this.isLoading = false;
             });
     }
 
     public delete(ev): void {
+        if (!this.group) {
+            this.$log.error(this.logTag, 'delete: Group is null');
+            return;
+        }
 
-        let confirm = this.$mdDialog.confirm()
+        const confirm = this.$mdDialog.confirm()
             .title(this.$translate.instant('messenger.GROUP_DELETE'))
             .textContent(this.$translate.instant('messenger.GROUP_DELETE_REALLY'))
             .targetEvent(ev)
@@ -144,35 +220,40 @@ export class GroupControllerModel implements threema.ControllerModel {
             .cancel(this.$translate.instant('common.CANCEL'));
 
         this.$mdDialog.show(confirm).then(() => {
-            this.reallyDelete();
+            this.reallyDelete(this.group!);
         }, () => {
             this.$log.debug('delete canceled');
         });
     }
 
-    private reallyDelete(): void {
-
-        if (!this.group.access.canDelete) {
+    private reallyDelete(group: threema.GroupReceiver): void {
+        if (!this.access.canDelete) {
             this.$log.error('can not delete group');
             return;
         }
 
         this.isLoading = true;
-        this.webClientService.deleteGroup(this.group)
+        this.webClientService.deleteGroup(group)
             .then(() => {
                 this.isLoading = false;
                 if (this.onRemovedCallback) {
-                    this.onRemovedCallback(this.group.id);
+                    this.onRemovedCallback(group.id);
                 }
             })
-            .catch(() => {
+            .catch((error) => {
+                // TODO: Handle this properly / show an error message
+                this.$log.error(`Deleting group failed: ${error}`);
                 this.isLoading = false;
             });
     }
 
     public sync(ev): void {
-        if (!this.group.access.canSync) {
-            this.$log.error('cannot sync group');
+        if (!this.group) {
+            this.$log.error(this.logTag, 'sync: Group is null');
+            return;
+        }
+        if (!this.access.canSync) {
+            this.$log.error(this.logTag, 'Cannot sync group');
             return;
         }
 
@@ -181,8 +262,9 @@ export class GroupControllerModel implements threema.ControllerModel {
             .then(() => {
                 this.isLoading = false;
             })
-            .catch(() => {
+            .catch((errorCode) => {
                 this.isLoading = false;
+                this.showError(errorCode);
             });
     }
 
@@ -190,24 +272,44 @@ export class GroupControllerModel implements threema.ControllerModel {
         switch (this.getMode()) {
             case ControllerModelMode.EDIT:
                 return this.webClientService.modifyGroup(
-                    this.group.id,
+                    this.group!.id,
                     this.members,
                     this.name,
-                    this.avatarController.getAvatar(),
+                    this.avatarController.avatarChanged ? this.avatarController.getAvatar() : undefined,
                 );
             case ControllerModelMode.NEW:
-
                 return this.webClientService.createGroup(
                     this.members,
-                    this.name,
-                    this.avatarController.getAvatar());
+                    (this.name && this.name.length > 0) ? this.name : undefined,
+                    this.avatarController.avatarChanged ? this.avatarController.getAvatar() : undefined,
+                );
             default:
-                this.$log.error('not allowed to save group');
-
+                this.$log.error(this.logTag, 'Cannot save group, invalid mode');
+                return Promise.reject('Cannot save group, invalid mode');
         }
     }
 
     public onChangeMembers(identities: string[]): void {
         this.members = identities;
+    }
+
+    public getMembers(): string[] {
+        return this.members;
+    }
+
+    /**
+     * Show an error message in a dialog.
+     */
+    private showError(errorCode: string): void {
+        if (errorCode === undefined) {
+            errorCode = 'unknown';
+        }
+        this.$mdDialog.show(
+            this.$mdDialog.alert()
+                .clickOutsideToClose(true)
+                .title(this.group ? this.group.displayName : 'Error')
+                .textContent(this.$translate.instant('validationError.modifyReceiver.' + errorCode))
+                .ok(this.$translate.instant('common.OK')),
+        );
     }
 }

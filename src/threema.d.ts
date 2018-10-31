@@ -15,23 +15,21 @@
  * along with Threema Web. If not, see <http://www.gnu.org/licenses/>.
  */
 
-// Types used for the Threema Webclient.
-
 declare const angular: ng.IAngularStatic;
 
 declare namespace threema {
 
     interface Avatar {
-        // Low resolution avatar path
-        low?: string;
-        // High resolution avatar path
-        high?: string;
+        // Low resolution avatar URI
+        low?: ArrayBuffer;
+        // High resolution avatar URI
+        high?: ArrayBuffer;
     }
 
-    interface AvatarRegistry {
-        contact: Avatar;
-        group: Avatar;
-        distributionList: Avatar;
+    interface WireMessageAcknowledgement {
+        id: string,
+        success: boolean,
+        error?: string,
     }
 
     /**
@@ -40,20 +38,54 @@ declare namespace threema {
     interface WireMessage {
         type: string;
         subType: string;
+        id?: string;
+        ack?: WireMessageAcknowledgement;
         args?: any;
         data?: any;
     }
 
-    type WireMessageCallback = (message: WireMessage, result: any) => boolean;
+    type MessageType = 'text' | 'image' | 'video' | 'audio' | 'location' | 'contact' |
+                       'status' | 'ballot' | 'file' | 'voipStatus' | 'unknown';
+    type MessageState = 'delivered' | 'read' | 'send-failed' | 'sent' | 'user-ack' |
+                        'user-dec' | 'pending' | 'timeout' | 'sending';
 
-    type MessageType = 'text' | 'image' | 'video' | 'audio' | 'location' | 'status' | 'ballot' | 'file';
-    type MessageState = 'delivered' | 'read' | 'send-failed' | 'sent' | 'user-ack' | 'user-dec' | 'pending' | 'sending';
+    const enum InitializationStep {
+        ClientInfo = 'client info',
+        Conversations = 'conversations',
+        Receivers = 'receivers',
+        Profile = 'profile',
+    }
+
+    interface InitializationStepRoutine {
+        requiredSteps: InitializationStep[];
+        callback: any;
+    }
 
     interface Thumbnail {
         img?: string;
-        preview: string;
+        preview: ArrayBuffer;
         width: number;
         height: number;
+    }
+
+    const enum EventType {
+        Created = 'created',
+        Sent = 'sent',
+        Delivered = 'delivered',
+        Read = 'read',
+        Acked = 'acked',
+        Modified = 'modified',
+    }
+
+    /**
+     * A message event, e.g. when it was delivered, read or modified.
+     */
+    interface MessageEvent {
+        // The event type
+        type: EventType;
+
+        // Unix timestamp in seconds
+        date: number;
     }
 
     /**
@@ -61,10 +93,12 @@ declare namespace threema {
      */
     interface Message {
         type: MessageType;
-        id: number;
+        id: string;
         body: string;
         thumbnail?: Thumbnail;
-        date: string;
+        date?: number;
+        events?: MessageEvent[];
+        sortKey: number;
         partnerId: string;
         isOutbox: boolean;
         isStatus: boolean;
@@ -76,6 +110,7 @@ declare namespace threema {
         file?: FileInfo;
         video?: VideoInfo;
         audio?: AudioInfo;
+        voip?: VoipStatusInfo;
         location?: LocationInfo;
         // only for temporary Messages
         temporaryId?: string;
@@ -92,20 +127,47 @@ declare namespace threema {
 
     interface VideoInfo {
         duration: number;
-        size: number;
+        size?: number;
     }
 
     interface AudioInfo {
         duration: number;
     }
 
+    const enum VoipStatus {
+        Missed = 1,
+        Finished = 2,
+        Rejected = 3,
+        Aborted = 4,
+    }
+
+    const enum VoipRejectReason {
+        Unknown = 0,
+        Busy = 1,
+        Timeout = 2,
+        Rejected = 3,
+    }
+
+    interface VoipStatusInfo {
+        status: VoipStatus;
+        duration?: number;
+        reason?: VoipRejectReason;
+    }
+
     interface LocationInfo {
         lat: number;
         lon: number;
         accuracy: number;
-        address: string;
-        poi: string;
+        description: string;
+        address?: string;
     }
+
+    interface BlobInfo {
+        buffer: ArrayBuffer;
+        mimetype: string;
+        filename: string;
+    }
+
     /**
      * All possible receiver types.
      */
@@ -137,62 +199,119 @@ declare namespace threema {
         canChangeMembers?: boolean;
     }
 
+    const enum IdentityType {
+        Regular = 0,
+        Work = 1,
+    }
+
+    /**
+     * The base class for a receiver. Only type and id.
+     */
+    interface BaseReceiver {
+        id: string;
+        type: ReceiverType;
+    }
+
     /**
      * A generic receiver.
      *
      * Note that the id is not unique for all receivers, only for all receivers
      * of a certain type. The primary key for a receiver is the tuple (type, id).
      */
-    interface Receiver {
-        type?: ReceiverType;
-        id: string;
+    interface Receiver extends BaseReceiver {
+        // The display name
         displayName: string;
+
+        // The color used for the avatar
         color: string;
-        avatar?: Avatar; // May be set if already fetched
+
+        // The avatar, may be set if already fetched
+        avatar?: Avatar;
+
+        // Permissions towards this receiver
         access: ReceiverAccess;
-        locked?: boolean;
-        visible?: boolean;
+
+        // Whether the chat with this receiver is locked. Used for private chats.
+        locked: boolean;
+
+        // Whether the chat with this receiver is visible. Used for private chats.
+        visible: boolean;
     }
 
     /**
      * A contact.
      */
     interface ContactReceiver extends Receiver {
-        type?: 'contact' | 'me';
+        // Flag indicating whether this is the own profile or another contact
+        type: 'contact' | 'me';
+
+        // Public nickname, if set
         publicNickname?: string;
+
+        // First name, if set
         firstName?: string;
+
+        // Last name, if set
         lastName?: string;
+
+        // Verification level integer (1-3)
         verificationLevel?: number;
-        state: string;
-        featureLevel: number | null;
+
+        // Feature mask
+        featureMask: number;
+
+        // The identity state
+        state: 'ACTIVE' | 'INACTIVE';
+
+        // Contact hidden?
+        hidden: boolean;
+
+        // The Threema public key
         publicKey: ArrayBuffer;
+
+        // System confact information
         systemContact?: SystemContact;
+
+        // Permissions towards this contact
         access: ContactReceiverAccess;
+
+        // Whether this is a contact from the same Threema Work package.
+        // Only relevant for Threema Work users.
+        isWork?: boolean;
+
+        // Whether this contact is blocked
+        isBlocked?: boolean;
+
+        // The identity type.
+        // 0 - Regular Threema user.
+        // 1 - Threema Work user.
+        identityType?: IdentityType;
     }
 
     /**
      * Own contact.
      */
     interface MeReceiver extends ContactReceiver {
-        type?: 'me';
+        type: 'me';
     }
 
     /**
      * A group.
      */
     interface GroupReceiver extends Receiver {
-        type?: 'group';
+        type: 'group';
         disabled: boolean;
         members: string[];
         administrator: string;
         access: GroupReceiverAccess;
+        createdAt: number;
     }
 
     /**
      * A distribution list.
      */
     interface DistributionListReceiver extends Receiver {
-        type?: 'distributionList';
+        type: 'distributionList';
         members: string[];
         access: DistributionListReceiverAccess;
     }
@@ -211,45 +330,125 @@ declare namespace threema {
         label: string;
         number: string;
     }
+
     /**
      * A conversation.
      */
     interface Conversation {
         type: ReceiverType;
         id: string;
-        position: number;
+        position?: number;
         messageCount: number;
         unreadCount: number;
-        latestMessage: Message;
+        latestMessage: Message | null;
         receiver?: Receiver;
         avatar?: ArrayBuffer;
+        notifications?: NotificationSettings;
+        isStarred?: boolean;
+    }
+
+    /**
+     * A conversation with a position field, used for updating a conversation.
+     */
+    interface ConversationWithPosition extends Conversation {
+        position: number;
+    }
+
+    interface NotificationSettings {
+        sound: NotificationSound;
+        dnd: NotificationDnd;
+    }
+
+    interface NotificationSound {
+        mode: NotificationSoundMode;
+    }
+
+    const enum NotificationSoundMode {
+        Default = 'default',
+        Muted = 'muted',
+    }
+
+    interface NotificationDnd {
+        mode: NotificationDndMode;
+        mentionOnly?: boolean;
+        until?: number;
+    }
+
+    const enum NotificationDndMode {
+        Off = 'off',
+        On = 'on',
+        Until = 'until',
+    }
+
+    /**
+     * A form of the notification settings where things like the "until" mode
+     * have been processed already.
+     */
+    interface SimplifiedNotificationSettings {
+        sound: {
+            muted: boolean,
+        };
+        dnd: {
+            enabled: boolean,
+            mentionOnly: boolean,
+        };
     }
 
     /**
      * Connection state in the welcome dialog.
+     *
+     * States:
+     *
+     * - new: Initial state
+     * - connecting: Connecting to signaling server
+     * - push: When trying to reconnect, waiting for push notification to arrive
+     * - manual_start: When trying to reconnect, waiting for manual session start
+     * - already_connected: When the user is already connected in another tab or window
+     * - waiting: Waiting for new-responder message from signaling server
+     * - peer_handshake: Doing SaltyRTC handshake with the peer
+     * - loading: Loading initial data
+     * - done: Initial loading is finished
+     * - closed: Connection is closed
+     * - reconnect_failed: Reconnecting failed after several attempts
+     *
      */
-    type ConnectionBuildupState = 'new' | 'push' | 'manual_start' | 'connecting' | 'waiting'
-        | 'peer_handshake' | 'loading' | 'done' | 'closed';
+    type ConnectionBuildupState = 'new' | 'connecting' | 'push' | 'manual_start' | 'already_connected'
+        | 'waiting' | 'peer_handshake' | 'loading' | 'done' | 'closed' | 'reconnect_failed';
+
+    interface ConnectionBuildupStateChange {
+        state: ConnectionBuildupState;
+        prevState: ConnectionBuildupState;
+    }
+
+    /**
+     * Connection state of the task peer connection.
+     */
+    const enum TaskConnectionState {
+        New = 'new',
+        Connecting = 'connecting',
+        Connected = 'connected',
+        Reconnecting = 'reconnecting',
+        Disconnected = 'disconnected',
+    }
 
     /**
      * Connection state of the WebRTC peer connection.
      */
-    type RTCConnectionState = 'new' | 'connecting' | 'connected' | 'disconnected';
+    const enum GlobalConnectionState {
+        Ok = 'ok',
+        Warning = 'warning',
+        Error = 'error',
+    }
 
-    /**
-     * Connection state of the WebRTC peer connection.
-     */
-    type GlobalConnectionState = 'ok' | 'warning' | 'error';
+    interface GlobalConnectionStateChange {
+        state: GlobalConnectionState;
+        prevState: GlobalConnectionState;
+    }
 
     /**
      * Type of message to be sent to a receiver.
      */
     type MessageContentType = 'text' | 'file';
-
-    /**
-     * Possible message types sent to the receiver.
-     */
-    type MessageDataType = 'text' | 'file';
 
     interface MessageData {
         // optional quote object
@@ -269,7 +468,7 @@ declare namespace threema {
         // File bytes
         data: ArrayBuffer;
         // Caption string
-        caption?: String;
+        caption?: string;
         // Send as file message
         sendAsFile?: boolean;
     }
@@ -282,79 +481,19 @@ declare namespace threema {
         text: string;
     }
 
-    /**
-     * The $stateParams format used for the welcome controller.
-     */
-    interface WelcomeStateParams extends ng.ui.IStateParamsService {
-        initParams: null | {keyStore: saltyrtc.KeyStore, peerTrustedKey: Uint8Array};
-    }
-
-    interface CreateReceiverStateParams extends ng.ui.IStateParamsService {
-        type: string;
-        initParams: null | {identity: null};
-    }
-
-    /**
-     * State service.
-     */
-    interface StateService {
-        // WebRTC states
-        signalingConnectionState: saltyrtc.SignalingState;
-        rtcConnectionState: RTCConnectionState;
-
-        // Global connection state
-        state: 'ok' | 'warning' | 'error';
-        stage: 'signaling' | 'rtc';
-        wasConnected: boolean;
-
-        // Connection buildup
-        connectionBuildupState: ConnectionBuildupState;
-        progress: number;
-        slowConnect: boolean;
-
-        // Update states
-        updateSignalingConnectionState(state: saltyrtc.SignalingState): void;
-        updateRtcConnectionState(state: RTCConnectionState): void;
-        updateConnectionBuildupState(state: ConnectionBuildupState): void;
-
-        reset(): void;
-    }
-
-    /**
-     * Notification service.
-     */
-    interface NotificationService {
-        requestNotificationPermission(): void;
-        showNotification(id: string, title: string, body: string,
-                         avatar: string | null, clickCallback: any | null): boolean;
-        clearCache(tag: string): void;
-    }
-
-    interface MessageService {
-        getAccess(message: Message, receiver: Receiver): MessageAccess;
-        createTemporary(receiver: Receiver, type: string, messageData: MessageData): Message;
-        showStatusIcon(message: Message, receiver: Receiver): boolean;
-    }
-
-    interface MessageAccess {
-        quote: boolean;
-        ack: boolean;
-        dec: boolean;
-        delete: boolean;
-        download: boolean;
-        copy: boolean;
-    }
-
     interface Quote {
         identity: string;
         text: string;
     }
 
-    interface Identity {
-        identity: string;
-        publicNickname: String;
-        publicKey: ArrayBuffer;
-        fingerprint: string;
+    const enum PushTokenType {
+        Gcm = 'gcm',
+        Apns = 'apns',
+    }
+
+    const enum PushTokenPrefix {
+        Gcm = 'g',
+        Apns = 'a',
     }
 
     interface TrustedKeyStoreData {
@@ -362,86 +501,108 @@ declare namespace threema {
         ownSecretKey: Uint8Array;
         peerPublicKey: Uint8Array;
         pushToken: string | null;
+        pushTokenType: PushTokenType | null;
     }
 
-    interface TrustedKeyStoreService {
-        storeTrustedKey(ownPublicKey: Uint8Array, ownSecretKey: Uint8Array, peerPublicKey: Uint8Array,
-                        pushToken: string | null, password: string): void;
-        hasTrustedKey(): boolean;
-        retrieveTrustedKey(password: string): TrustedKeyStoreData;
-        clearTrustedKey(): void;
-    }
-
-    interface PushService {
-        init(pushToken: string): void;
-        reset(): void;
-        isAvailable(): boolean;
-        sendPush(session: Uint8Array): Promise<boolean>;
-    }
-
-    interface BrowserInfo {
-        chrome: boolean;
-        firefox: boolean;
-        msie: boolean;
-        opera: boolean;
-        safari: boolean;
-        version: string;
-        textInfo: string;
-    }
-
-    interface BrowserService {
-        getBrowser(): BrowserInfo;
-        isVisible(): boolean;
-    }
-
-    interface TitleService {
-        updateUnreadCount(count: number): void;
-    }
-
-    interface FingerPrintService {
-        generate(publicKey: ArrayBuffer): string;
-    }
-
-    interface ContactService {
-        requiredDetails(contactReceiver: ContactReceiver): Promise<ContactReceiver>;
-    }
-
-    interface ControllerModelService {
-        contact(receiver: ContactReceiver, mode: any): ControllerModel;
-        group(receiver: GroupReceiver, mode: any): ControllerModel;
-        distributionList(receiver: DistributionListReceiver, mode: any): ControllerModel;
-    }
-
-    interface QrCodeService {
-        buildQrCodePayload(initiatorKey: Uint8Array, authToken: Uint8Array, serverKey: Uint8Array | null,
-                           host: string, port: number,
-                           persistent: boolean): string;
-    }
-
-    interface PromiseCallbacks {
-        resolve: (arg: any) => void;
-        reject: (arg: any) => void;
+    const enum BrowserName {
+        Chrome = 'chrome',
+        ChromeIos = 'chromeIos',
+        Firefox = 'firefox',
+        FirefoxIos = 'firefoxIos',
+        InternetExplorer = 'ie',
+        Edge = 'edge',
+        Opera = 'opera',
+        Safari = 'safari',
     }
 
     interface PromiseRequestResult<T> {
         success: boolean;
-        message?: string;
+        error?: string;
         data?: T;
     }
 
-    interface ControllerModel {
-        subject: string;
-        isLoading: boolean;
-        save(): any;
-        isValid(): boolean;
-        canEdit(): boolean;
-        getMode(): number;
-        setOnRemoved(callback: any): void;
+    type OnRemovedCallback = (identity: string) => void;
+
+    const enum ControllerModelMode {
+        NEW = 'new',
+        VIEW = 'view',
+        EDIT = 'edit',
+        CHAT = 'chat',
     }
 
-    interface AvatarControllerModel {
-        onChangeAvatar: (image: ArrayBuffer) => void;
-        getAvatar(): ArrayBuffer | null;
+    const enum ContactReceiverFeature {
+        AUDIO = 0x01,
+        GROUP_CHAT = 0x02,
+        BALLOT = 0x04,
+        FILE = 0x08,
+        VOIP = 0x10,
+    }
+
+    interface ControllerModel<T extends BaseReceiver> {
+        /**
+         * The title shown in the header.
+         */
+        subject: string;
+
+        /**
+         * Loading state.
+         */
+        isLoading: boolean;
+
+        /**
+         * Save the changes, return a promise with the receiver.
+         */
+        save(): Promise<T>;
+
+        /**
+         * Delete all messages in this conversation.
+         */
+        clean(ev: any): any;
+
+        /**
+         * Validate this receiver.
+         */
+        isValid(): boolean;
+
+        /*
+         * Return whether this receiver can be chatted with.
+         */
+        canChat(): boolean;
+
+        /**
+         * Can this receiver be edited?
+         */
+        canEdit(): boolean;
+
+        /**
+         * Can this receiver be cleaned?
+         */
+        canClean(): boolean;
+
+        /*
+         * Return whether this receiver can show a QR code of the public key.
+         */
+        canShowQr(): boolean;
+
+        /**
+         * The editing mode, e.g. view or edit this receiver.
+         */
+        getMode(): ControllerModelMode;
+
+        /**
+         * Set the on removed callback.
+         */
+        setOnRemoved(callback: OnRemovedCallback): void;
+
+        /**
+         * Callback called when the members change.
+         */
+        onChangeMembers(identities: string[]): void;
+
+        /**
+         * Return the members of this receiver.
+         */
+        getMembers(): string[];
     }
 
     interface Alert {
@@ -451,114 +612,156 @@ declare namespace threema {
     }
 
     interface ReceiverListener {
-        onRemoved(receiver: Receiver);
+        onConversationRemoved(receiver: Receiver);
     }
 
     interface Config {
         SELF_HOSTED: boolean;
+        PREV_PROTOCOL_LAST_VERSION: string | null;
+        VERSION_MOUNTAIN: string;
+        VERSION_MOUNTAIN_URL: string;
+        VERSION_MOUNTAIN_IMAGE_URL: string;
+        VERSION_MOUNTAIN_IMAGE_COPYRIGHT: string;
+        VERSION_MOUNTAIN_HEIGHT: number;
+        GIT_BRANCH: string;
         SALTYRTC_PORT: number;
         SALTYRTC_SERVER_KEY: string | null;
         SALTYRTC_HOST: string | null;
         SALTYRTC_HOST_PREFIX: string | null;
         SALTYRTC_HOST_SUFFIX: string | null;
-        SALTYRTC_STUN: RTCIceServer;
-        SALTYRTC_TURN: RTCIceServer;
+        SALTYRTC_LOG_LEVEL: saltyrtc.LogLevel;
+        ICE_SERVERS: RTCIceServer[];
         PUSH_URL: string;
+        DEBUG: boolean;
+        MSG_DEBUGGING: boolean;
+        MSGPACK_DEBUGGING: boolean;
+        ICE_DEBUGGING: boolean;
+    }
+
+    interface InitialConversationData {
+        draft: string;
+        initialText: string;
     }
 
     interface BrowserMinVersions {
         FF: number;
         CHROME: number;
         OPERA: number;
+        SAFARI: number;
     }
 
-    interface MimeService {
-        isImage(mimeType: string): boolean;
-        isAudio(mimeType: string): boolean;
-        isVideo(mimeType: string): boolean;
-        getLabel(mimeType: string): string;
-        getIconUrl(mimeType: string): string;
+    interface BatteryStatus {
+        percent: number | null;
+        isCharging: boolean;
     }
 
-    interface ReceiverService {
-        setActive(activeReceiver: Receiver): void;
-        getActive(): Receiver;
-        isConversationActive(conversation: Conversation): boolean;
-        compare(a: Conversation | Receiver, b: Conversation| Receiver): boolean;
-        isContact(receiver: Receiver): boolean;
-        isGroup(receiver: Receiver): boolean;
-        isDistributionList(receiver: Receiver): boolean;
-        isBusinessContact(receiver: Receiver): boolean;
+    const enum OperatingSystem {
+        Android = 'android',
+        Ios = 'ios',
     }
 
-    interface WebClientDefault {
-        getAvatar(type: string, highResolution: boolean): string;
+    interface ClientInfo {
+        // The device name
+        device: string;
+
+        // The operating system
+        os: OperatingSystem;
+
+        // The operating system version (e.g. "5.1")
+        osVersion: string;
+
+        // Whether the app is the *work* variant of Threema
+        isWork: boolean;
+
+        // The GCM / APNS push token
+        pushToken?: string;
+
+        // The device configuration
+        configuration: AppConfig;
+
+        // The device capabilities
+        capabilities: AppCapabilities;
     }
 
-    interface WebClientService {
-        salty: saltyrtc.SaltyRTC;
-        messages: Container.Messages;
-        conversations: Container.Conversations;
-        receivers: Container.Receivers;
-        alerts: Alert[];
-        defaults: WebClientDefault;
-        receiverListener: ReceiverListener[];
-
-        me: MeReceiver;
-        contacts: Map<string, ContactReceiver>;
-        groups: Map<string, GroupReceiver>;
-        distributionLists: Map<string, DistributionListReceiver>;
-        typing: Container.Typing;
-
-        buildQrCodePayload(persistent: boolean): string;
-        init(keyStore?: saltyrtc.KeyStore, peerTrustedKey?: Uint8Array, resetField?: boolean): void;
-        start(): ng.IPromise<any>;
-        stop(requestedByUs: boolean, deleteStoredData?: boolean, resetPush?: boolean, redirect?: boolean): void;
-        registerInitializationStep(name: string): void;
-        setReceiverListener(listener: ReceiverListener): void;
-        requestClientInfo(): void;
-        requestReceivers(): void;
-        requestConversations(): void;
-        requestMessages(receiver: Receiver, reloadExisting?: boolean): number;
-        requestAvatar(receiver: Receiver, highResolution: boolean): Promise<any>;
-        requestThumbnail(receiver: Receiver, message: Message): Promise<any>;
-        requestBlob(msgId: number, receiver: Receiver): Promise<ArrayBuffer>;
-        requestRead(receiver, newestMessageId: number): void;
-        requestContactDetail(contactReceiver: ContactReceiver): Promise<any>;
-        sendMessage(receiver, type: MessageContentType, message: MessageData): Promise<Promise<any>>;
-        ackMessage(receiver, message: Message, acknowledged?: boolean): void;
-        deleteMessage(receiver, message: Message): void;
-        sendMeIsTyping(receiver, isTyping: boolean): void;
-        sendKeyPersisted(): void;
-        addContact(threemaId: String): Promise<ContactReceiver>;
-        modifyContact(threemaId: String, firstName: String, lastName: String, avatar?: ArrayBuffer):
-            Promise<ContactReceiver>;
-        createGroup(members: String[], name: String, avatar?: ArrayBuffer): Promise<GroupReceiver>;
-        modifyGroup(id: string, members: String[], name: String, avatar?: ArrayBuffer): Promise<GroupReceiver>;
-        leaveGroup(group: GroupReceiver): Promise<any>;
-        deleteGroup(group: GroupReceiver): Promise<any>;
-        syncGroup(group: GroupReceiver): Promise<any>;
-        createDistributionList(members: String[], name: String): Promise<DistributionListReceiver>;
-        modifyDistributionList(id: string, members: String[], name: String): Promise<DistributionListReceiver>;
-        deleteDistributionList(distributionList: DistributionListReceiver): Promise<any>;
-        isTyping(receiver: ContactReceiver): boolean;
-        getMyIdentity(): Identity;
-        getQuote(receiver: Receiver): Quote;
-        setQuote(receiver: Receiver, message?: Message): void;
-        setDraft(receiver: Receiver, message: string): void;
-        getDraft(receiver: Receiver): string;
-        setPassword(password: string): void;
-        clearCache(): void;
+    interface AppConfig {
+        voipEnabled: boolean;
+        voipForceTurn: boolean;
+        largeSingleEmoji: boolean;
+        showInactiveIDs: boolean;
     }
 
-    interface ControllerService {
-        setControllerName(name: string): void;
-        getControllerName(): string;
+    interface AppCapabilities {
+        maxGroupSize: number;
+        maxFileSize: number;
+        distributionLists: boolean;
+        imageFormat: ImageFormat;
+        mdm?: MdmRestrictions;
+    }
+
+    /**
+     * MIME types for the images exchanged between app and browser.
+     */
+    interface ImageFormat {
+        avatar: string;
+        thumbnail: string;
+    }
+
+    interface MdmRestrictions {
+        disableAddContact?: boolean;
+        disableCreateGroup?: boolean;
+        disableSaveToGallery?: boolean;
+        disableExport?: boolean;
+        disableMessagePreview?: boolean;
+        disableCalls?: boolean;
+        readonlyProfile?: boolean;
+    }
+
+    interface ProfileUpdate {
+        publicNickname?: string;
+        avatar?: ArrayBuffer;
+    }
+
+    interface Profile extends ProfileUpdate {
+        identity: string;
+        publicKey: ArrayBuffer;
+    }
+
+    interface Mention {
+        identity: string;
+        query: string;
+        isAll: boolean;
+    }
+
+    interface WordResult {
+        // The trimmed word
+        word: string;
+        // The length of the untrimmed word
+        realLength: number;
+    }
+
+    interface WebClientServiceStopArguments {
+        reason: DisconnectReason,
+        send: boolean,
+        close: boolean | string,
+        connectionBuildupState?: ConnectionBuildupState,
+    }
+
+    const enum ChosenTask {
+        None = 'none',
+        WebRTC = 'webrtc',
+        RelayedData = 'relayed-data',
+    }
+
+    const enum DisconnectReason {
+        SessionStopped = 'stop',
+        SessionDeleted = 'delete',
+        WebclientDisabled = 'disable',
+        SessionReplaced = 'replace',
+        SessionError = 'error',
     }
 
     namespace Container {
         interface ReceiverData {
-            me: MeReceiver;
             contacts: ContactReceiver[];
             groups: GroupReceiver[];
             distributionLists: DistributionListReceiver[];
@@ -579,7 +782,7 @@ declare namespace threema {
             groups: Map<string, GroupReceiver>;
             distributionLists: Map<string, DistributionListReceiver>;
             get(receiverType: ReceiverType): Receiver | Map<string, Receiver>;
-            getData(receiver: Receiver): Receiver | null;
+            getData(receiver: BaseReceiver): Receiver | null;
             set(data: ReceiverData): void;
             setMe(data: MeReceiver): void;
             setContacts(data: ContactReceiver[]): void;
@@ -595,8 +798,9 @@ declare namespace threema {
         interface Conversations {
             get(): Conversation[];
             set(data: Conversation[]): void;
+            find(pattern: Conversation | Receiver): Conversation | null;
             add(conversation: Conversation): void;
-            updateOrAdd(conversation: Conversation): void;
+            updateOrAdd(conversation: Conversation, returnOld?: boolean): Conversation | null;
             remove(conversation: Conversation): void;
             setFilter(filter: (data: Conversation[]) => Conversation[]): void;
             setConverter(converter: (data: Conversation) => Conversation): void;
@@ -604,32 +808,33 @@ declare namespace threema {
 
         interface Messages {
             converter: (data: Message) => Message;
-            getList(receiver: Receiver): Message[];
+            getList(receiver: BaseReceiver): Message[];
             clear($scope: ng.IScope): void;
-            clearReceiverMessages(receiver: Receiver): Number;
-            contains(receiver: Receiver): boolean;
-            hasMore(receiver: Receiver): boolean;
-            setMore(receiver: Receiver, more: boolean): void;
-            getReferenceMsgId(receiver: Receiver): number;
-            isRequested(receiver: Receiver): boolean;
-            setRequested(receiver: Receiver): void;
-            clearRequested(receiver): void;
-            addNewer(receiver: Receiver, messages: Message[]): void;
-            addOlder(receiver: Receiver, messages: Message[]): void;
-            update(receiver: Receiver, message: Message): boolean;
-            setThumbnail(receiver: Receiver, messageId: number, thumbnailImage: string): boolean;
-            remove(receiver: Receiver, messageId: number): boolean;
-            removeTemporary(receiver: Receiver, temporaryMessageId: string): boolean;
-            bindTemporaryToMessageId(receiver: Receiver, temporaryId: string, messageId: number): boolean;
-            notify(receiver: Receiver, $scope: ng.IScope): void;
-            register(receiver: Receiver, $scope: ng.IScope, callback: any): Message[];
-            updateFirstUnreadMessage(receiver: Receiver);
+            clearReceiverMessages(receiver: BaseReceiver): number;
+            contains(receiver: BaseReceiver): boolean;
+            hasMore(receiver: BaseReceiver): boolean;
+            setMore(receiver: BaseReceiver, more: boolean): void;
+            getReferenceMsgId(receiver: BaseReceiver): string;
+            isRequested(receiver: BaseReceiver): boolean;
+            setRequested(receiver: BaseReceiver): void;
+            clearRequested(receiver: BaseReceiver): void;
+            addNewer(receiver: BaseReceiver, messages: Message[]): void;
+            addOlder(receiver: BaseReceiver, messages: Message[]): void;
+            update(receiver: BaseReceiver, message: Message): boolean;
+            setThumbnail(receiver: BaseReceiver, messageId: string, thumbnailImage: string): boolean;
+            remove(receiver: BaseReceiver, messageId: string): boolean;
+            removeTemporary(receiver: BaseReceiver, temporaryMessageId: string): boolean;
+            bindTemporaryToMessageId(receiver: BaseReceiver, temporaryId: string, messageId: string): boolean;
+            notify(receiver: BaseReceiver, $scope: ng.IScope): void;
+            register(receiver: BaseReceiver, $scope: ng.IScope, callback: any): Message[];
+            updateFirstUnreadMessage(receiver: BaseReceiver);
         }
 
         interface Typing {
-            setTyping(receiver: ContactReceiver): void;
-            unsetTyping(receiver: ContactReceiver): void;
-            isTyping(receiver: ContactReceiver): boolean;
+            setTyping(receiver: BaseReceiver): void;
+            unsetTyping(receiver: BaseReceiver): void;
+            clearAll(): void;
+            isTyping(receiver: BaseReceiver): boolean;
         }
 
         interface Drafts {

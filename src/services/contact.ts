@@ -15,25 +15,27 @@
  * along with Threema Web. If not, see <http://www.gnu.org/licenses/>.
  */
 
-export class ContactService implements threema.ContactService {
-    private webClientService: threema.WebClientService;
+import {WebClientService} from './webclient';
+
+export class ContactService {
+    private webClientService: WebClientService;
 
     public static $inject = ['WebClientService'];
-    constructor(webClientService: threema.WebClientService) {
+    constructor(webClientService: WebClientService) {
         this.webClientService = webClientService;
     }
 
+    /**
+     * Return a promise that resolves if the system contact details of a
+     * ContactReceiver have been fetched or are already present.
+     */
     public requiredDetails(contactReceiver: threema.ContactReceiver): Promise<threema.ContactReceiver> {
         return new Promise((resolve, reject) => {
             if (contactReceiver.systemContact === undefined) {
-                // load
+                // System contact not available yet. Load it!
                 this.webClientService.requestContactDetail(contactReceiver)
-                    .then(() => {
-                        resolve(resolve);
-                    })
-                    .catch((data) => {
-                        reject(data);
-                    });
+                    .then((data) => resolve(data))
+                    .catch((data) => reject(data));
             } else {
                 resolve(contactReceiver);
             }

@@ -18,27 +18,48 @@
 import {ContactControllerModel} from '../controller_model/contact';
 import {DistributionListControllerModel} from '../controller_model/distributionList';
 import {GroupControllerModel} from '../controller_model/group';
-import {ControllerModelMode} from '../types/enums';
+import {MeControllerModel} from '../controller_model/me';
+import {WebClientService} from './webclient';
+
+// Type aliases
+import ControllerModelMode = threema.ControllerModelMode;
 
 /**
  * Factory to create ControllerModels
  */
-export class ControllerModelService implements threema.ControllerModelService {
+export class ControllerModelService {
     private $log: ng.ILogService;
     private $translate: ng.translate.ITranslateService;
     private $mdDialog: ng.material.IDialogService;
-    private webClientService: threema.WebClientService;
+    private webClientService: WebClientService;
 
     public static $inject = ['$log', '$translate', '$mdDialog', 'WebClientService'];
     constructor($log: ng.ILogService, $translate: ng.translate.ITranslateService,
-                $mdDialog: ng.material.IDialogService, webClientService: threema.WebClientService) {
+                $mdDialog: ng.material.IDialogService, webClientService: WebClientService) {
         this.$log = $log;
         this.$translate = $translate;
         this.$mdDialog = $mdDialog;
         this.webClientService = webClientService;
     }
 
-    public contact(receiver: threema.ContactReceiver, mode: ControllerModelMode): threema.ControllerModel {
+    public me(
+        receiver: threema.MeReceiver,
+        mode: ControllerModelMode,
+    ): threema.ControllerModel<threema.MeReceiver> {
+        return new MeControllerModel(
+            this.$log,
+            this.$translate,
+            this.$mdDialog,
+            this.webClientService,
+            mode,
+            receiver,
+        );
+    }
+
+    public contact(
+        receiver: threema.ContactReceiver,
+        mode: ControllerModelMode,
+    ): threema.ControllerModel<threema.ContactReceiver> {
         return new ContactControllerModel(
             this.$log,
             this.$translate,
@@ -49,7 +70,10 @@ export class ControllerModelService implements threema.ControllerModelService {
         );
     }
 
-    public group(receiver: threema.GroupReceiver, mode: ControllerModelMode): threema.ControllerModel {
+    public group(
+        receiver: threema.GroupReceiver,
+        mode: ControllerModelMode,
+    ): threema.ControllerModel<threema.GroupReceiver> {
         return new GroupControllerModel(
             this.$log,
             this.$translate,
@@ -60,8 +84,10 @@ export class ControllerModelService implements threema.ControllerModelService {
         );
     }
 
-    public distributionList(receiver: threema.DistributionListReceiver,
-                            mode: ControllerModelMode): threema.ControllerModel {
+    public distributionList(
+        receiver: threema.DistributionListReceiver,
+        mode: ControllerModelMode,
+    ): threema.ControllerModel<threema.DistributionListReceiver> {
         return new DistributionListControllerModel(
             this.$log,
             this.$translate,

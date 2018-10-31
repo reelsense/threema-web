@@ -26,15 +26,18 @@ export default [
                 location: '=',
             },
             controllerAs: 'ctrl',
-            controller: [function() {
-                this.label = this.location.address ? this.location.address
-                        : this.location.lat  + ', ' + this.location.lon;
-            }],
+            controller: [function() { /* nothing */ }],
             template: `
-                <a ng-href="{{ctrl.location | mapLink}}" class="location-address" target="_blank" rel="noopener noreferrer">
-                    {{ctrl.label}}
-                </a>
-                <div class="location-poi" ng-if="ctrl.location.poi">{{ctrl.location.poi}}</div>
+                <div class="location-message">
+                    <div class="circle">
+                        <i class="material-icons md-24">location_on</i>
+                    </div>
+                    <div class="location-details">
+                        <div class="description">{{ ctrl.location.description }}</div>
+                        <div class="details" ng-if="ctrl.location.address">{{ ctrl.location.address }}</div>
+                        <div class="details" ng-if="!ctrl.location.address">{{ ctrl.location.lat }}, {{ ctrl.location.lon }}</div>
+                    </div>
+                </div>
             `,
         };
     },

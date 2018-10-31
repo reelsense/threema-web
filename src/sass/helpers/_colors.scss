@@ -1,12 +1,32 @@
 $status-ok: #4caf50;
 $status-warning: #ff9800;
 $status-error: #f44336;
+$status-starred: #ffc107;
 $border-grey: #dddddd;
 $background-grey: lighten($border-grey, 7%);
 $material-grey: rgba(0, 0, 0, 0.54);
+$material-grey-dark: rgba(0, 0, 0, 0.87);
 $url-light-blue: #63a6cf;
+$work-blue: #3b84df;
 
 $dark-background-color: #F6F6F6;
 $bright-background-color: white;
 
 $material-card-shadow: 0px 2px 5px 0px rgba(0,0,0,0.16),0px 2px 5px 0px rgba(0,0,0,0.23);
+
+$active-placeholder-color: lightgray;
+
+.color-status-ok {
+    color: $status-ok;
+}
+
+.color-status-warning {
+    color: $status-warning;
+}
+
+.color-status-error {
+    color: $status-error;
+}
+
+.material-icons.md-medium-dark { color: rgba(0, 0, 0, 0.54); }
+.material-icons.md-medium-dark.md-inactive { color: rgba(0, 0, 0, 0.26); }

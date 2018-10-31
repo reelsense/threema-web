@@ -15,8 +15,28 @@
  * along with Threema Web. If not, see <http://www.gnu.org/licenses/>.
  */
 
-import {AvatarControllerModel} from '../controller_model/avatar';
+// tslint:disable:no-reference
+
+/// <reference path="../types/broadcastchannel.d.ts" />
+
+import {
+    StateProvider as UiStateProvider,
+    StateService as UiStateService,
+} from '@uirouter/angularjs';
+
+import {BrowserInfo} from '../helpers/browser_info';
+import {BrowserService} from '../services/browser';
+import {ControllerService} from '../services/controller';
 import {TrustedKeyStoreService} from '../services/keystore';
+import {PushService} from '../services/push';
+import {SettingsService} from '../services/settings';
+import {StateService} from '../services/state';
+import {TimeoutService} from '../services/timeout';
+import {VersionService} from '../services/version';
+import {WebClientService} from '../services/webclient';
+
+import GlobalConnectionState = threema.GlobalConnectionState;
+import DisconnectReason = threema.DisconnectReason;
 
 class DialogController {
     // TODO: This is also used in partials/messenger.ts. We could somehow
@@ -38,78 +58,100 @@ class WelcomeController {
 
     private static REDIRECT_DELAY = 500;
 
+    private logTag: string = '[WelcomeController]';
+
     // Angular services
     private $scope: ng.IScope;
-    private $state: ng.ui.IStateService;
-    private $timeout: ng.ITimeoutService;
-    private $interval: ng.IIntervalService;
     private $log: ng.ILogService;
+    private $window: ng.IWindowService;
+    private $state: UiStateService;
 
     // Material design services
-    private $mdDialog;
-    private $translate: any;
+    private $mdDialog: ng.material.IDialogService;
+    private $translate: ng.translate.ITranslateService;
 
     // Custom services
-    private webClientService: threema.WebClientService;
-    private TrustedKeyStore: TrustedKeyStoreService;
-    private pushService: threema.PushService;
-    private stateService: threema.StateService;
+    private webClientService: WebClientService;
+    private trustedKeyStore: TrustedKeyStoreService;
+    private pushService: PushService;
+    private stateService: StateService;
+    private settingsService: SettingsService;
+    private timeoutService: TimeoutService;
+    private config: threema.Config;
 
     // Other
     public name = 'welcome';
     private mode: 'scan' | 'unlock';
     private qrCode;
     private password: string = '';
+    private formLocked: boolean = false;
+    private pleaseUpdateAppMsg: string = null;
+    private browser: BrowserInfo;
+    private browserWarningShown: boolean = false;
 
     public static $inject = [
-        '$scope', '$state', '$stateParams', '$timeout', '$interval', '$log', '$mdDialog', '$translate',
+        '$scope', '$state', '$log', '$window', '$mdDialog', '$translate',
         'WebClientService', 'TrustedKeyStore', 'StateService', 'PushService', 'BrowserService',
-        'BROWSER_MIN_VERSIONS', 'ControllerService',
+        'VersionService', 'SettingsService', 'TimeoutService', 'ControllerService',
+        'BROWSER_MIN_VERSIONS', 'CONFIG',
     ];
-    constructor($scope: ng.IScope, $state: ng.ui.IStateService, $stateParams: threema.WelcomeStateParams,
-                $timeout: ng.ITimeoutService, $interval: ng.IIntervalService,
-                $log: ng.ILogService, $mdDialog, $translate,
-                webClientService: threema.WebClientService, TrustedKeyStore: TrustedKeyStoreService,
-                stateService: threema.StateService, pushService: threema.PushService,
-                browserService: threema.BrowserService,
+    constructor($scope: ng.IScope, $state: UiStateService,
+                $log: ng.ILogService, $window: ng.IWindowService, $mdDialog: ng.material.IDialogService,
+                $translate: ng.translate.ITranslateService,
+                webClientService: WebClientService, trustedKeyStore: TrustedKeyStoreService,
+                stateService: StateService, pushService: PushService,
+                browserService: BrowserService,
+                versionService: VersionService,
+                settingsService: SettingsService,
+                timeoutService: TimeoutService,
+                controllerService: ControllerService,
                 minVersions: threema.BrowserMinVersions,
-                controllerService: threema.ControllerService) {
+                config: threema.Config) {
         controllerService.setControllerName('welcome');
         // Angular services
         this.$scope = $scope;
         this.$state = $state;
-        this.$timeout = $timeout;
-        this.$interval = $interval;
         this.$log = $log;
+        this.$window = $window;
         this.$mdDialog = $mdDialog;
         this.$translate = $translate;
 
         // Own services
         this.webClientService = webClientService;
-        this.TrustedKeyStore = TrustedKeyStore;
+        this.trustedKeyStore = trustedKeyStore;
         this.stateService = stateService;
         this.pushService = pushService;
+        this.settingsService = settingsService;
+        this.timeoutService = timeoutService;
+        this.config = config;
+
+        // TODO: Allow to trigger below behaviour by using state parameters
 
         // Determine whether browser warning should be shown
-        const browser = browserService.getBrowser();
-        const version = parseFloat(browser.version);
-        $log.debug('Detected browser:', browser.textInfo);
-        if (isNaN(version)) {
+        this.browser = browserService.getBrowser();
+        const version = this.browser.version;
+        $log.debug('Detected browser:', this.browser.description());
+        if (!this.browser.wasDetermined()) {
             $log.warn('Could not determine browser version');
             this.showBrowserWarning();
-        } else if (browser.chrome === true) {
+        } else if (this.browser.name === threema.BrowserName.Chrome) {
             if (version < minVersions.CHROME) {
                 $log.warn('Chrome is too old (' + version + ' < ' + minVersions.CHROME + ')');
                 this.showBrowserWarning();
             }
-        } else if (browser.firefox === true) {
+        } else if (this.browser.name === threema.BrowserName.Firefox) {
             if (version < minVersions.FF) {
                 $log.warn('Firefox is too old (' + version + ' < ' + minVersions.FF + ')');
                 this.showBrowserWarning();
             }
-        } else if (browser.opera === true) {
+        } else if (this.browser.name === threema.BrowserName.Opera) {
             if (version < minVersions.OPERA) {
                 $log.warn('Opera is too old (' + version + ' < ' + minVersions.OPERA + ')');
+                this.showBrowserWarning();
+            }
+        } else if (this.browser.name === threema.BrowserName.Safari) {
+            if (version < minVersions.SAFARI) {
+                $log.warn('Safari is too old (' + version + ' < ' + minVersions.SAFARI + ')');
                 this.showBrowserWarning();
             }
         } else {
@@ -117,16 +159,43 @@ class WelcomeController {
             this.showBrowserWarning();
         }
 
-        // clear cache
+        // Clean up local storage
+        // TODO: Remove this in future version
+        this.settingsService.removeUntrustedKeyValuePair('v2infoShown');
+
+        // Determine whether local storage is available
+        if (this.trustedKeyStore.blocked === true) {
+            $log.error('Cannot access local storage. Is it being blocked by a browser add-on?');
+            this.showLocalStorageWarning();
+        }
+
+        // Determine current version
+        versionService.initVersion();
+
+        // Determine last version with previous protocol version
+        if (this.config.PREV_PROTOCOL_LAST_VERSION !== null) {
+            this.pleaseUpdateAppMsg = this.$translate.instant('troubleshooting.PLEASE_UPDATE_APP');
+            if (!this.config.SELF_HOSTED) {
+                this.pleaseUpdateAppMsg += ' ' + this.$translate.instant('troubleshooting.USE_ARCHIVE_VERSION', {
+                    archiveUrl: `https://web.threema.ch/archive/${this.config.PREV_PROTOCOL_LAST_VERSION}/`,
+                });
+            }
+        }
+
+        // Clear cache
         this.webClientService.clearCache();
 
+        // Determine whether trusted key is available
+        let hasTrustedKey = null;
+        try {
+            hasTrustedKey = this.trustedKeyStore.hasTrustedKey();
+        } catch (e) {
+            $log.error('Exception while accessing local storage:', e);
+            this.showLocalStorageException(e);
+        }
+
         // Determine connection mode
-        if ($stateParams.initParams !== null) {
-            this.mode = 'unlock';
-            const keyStore = $stateParams.initParams.keyStore;
-            const peerTrustedKey = $stateParams.initParams.peerTrustedKey;
-            this.reconnect(keyStore, peerTrustedKey);
-        } else if (TrustedKeyStore.hasTrustedKey()) {
+        if (hasTrustedKey) {
             this.mode = 'unlock';
             this.unlock();
         } else {
@@ -178,13 +247,31 @@ class WelcomeController {
     }
 
     /**
+     * Whether to show troubleshooting hints related to WebRTC.
+     */
+    public get showWebrtcTroubleshooting(): boolean {
+        return this.webClientService.chosenTask === threema.ChosenTask.WebRTC;
+    }
+
+    /**
      * Initiate a new session by scanning a new QR code.
      */
-    private scan(): void {
-        this.$log.info('Initialize session by scanning QR code...');
+    private scan(stopArguments?: threema.WebClientServiceStopArguments): void {
+        this.$log.info(this.logTag, 'Initialize session by scanning QR code...');
 
         // Initialize webclient with new keystore
-        this.webClientService.init();
+        this.webClientService.stop(stopArguments !== undefined ? stopArguments : {
+            reason: DisconnectReason.SessionStopped,
+            send: false,
+            close: 'welcome',
+            connectionBuildupState: this.stateService.connectionBuildupState,
+        });
+        this.webClientService.init({
+            resume: false,
+        });
+
+        // Set up the broadcast channel that checks whether we're already connected in another tab
+        this.setupBroadcastChannel(this.webClientService.salty.keyStore.publicKeyHex);
 
         // Initialize QR code params
         this.$scope.$watch(() => this.password, () => {
@@ -200,53 +287,174 @@ class WelcomeController {
      * Initiate a new session by unlocking a trusted key.
      */
     private unlock(): void {
-        this.$log.info('Initialize session by unlocking trusted key...');
+        this.stateService.reset('new');
+        this.$log.info(this.logTag, 'Initialize session by unlocking trusted key...');
     }
 
     /**
      * Decrypt the keys and initiate the session.
      */
     private unlockConfirm(): void {
-        const decrypted: threema.TrustedKeyStoreData = this.TrustedKeyStore.retrieveTrustedKey(this.password);
+        // Lock form to prevent further input
+        this.formLocked = true;
+
+        const decrypted: threema.TrustedKeyStoreData = this.trustedKeyStore.retrieveTrustedKey(this.password);
         if (decrypted === null) {
+            this.formLocked = false;
             return this.showDecryptionFailed();
         }
 
         // Instantiate new keystore
         const keyStore = new saltyrtcClient.KeyStore(decrypted.ownSecretKey);
 
-        // Initialize push service
-        if (decrypted.pushToken !== null) {
-            this.pushService.init(decrypted.pushToken);
-            this.$log.debug('Initialize push service');
-        }
+        // Set up the broadcast channel that checks whether we're already connected in another tab
+        this.setupBroadcastChannel(keyStore.publicKeyHex);
 
         // Reconnect
-        this.reconnect(keyStore, decrypted.peerPublicKey);
+        this.reconnect(keyStore, decrypted);
     }
 
     /**
-     * Reconnect using a specific keypair and peer public key.
+     * Set up a `BroadcastChannel` to check if there are other tabs running on
+     * the same session.
+     *
+     * The `publicKeyHex` parameter is the hex-encoded public key of the keystore
+     * used to establish the SaltyRTC connection.
      */
-    private reconnect(keyStore: saltyrtc.KeyStore, peerTrustedKey: Uint8Array): void {
-        this.webClientService.init(keyStore, peerTrustedKey);
+    private setupBroadcastChannel(publicKeyHex: string) {
+        if (!('BroadcastChannel' in this.$window)) {
+            // No BroadcastChannel support in this browser
+            this.$log.warn(this.logTag, 'BroadcastChannel not supported in this browser');
+            return;
+        }
+
+        // Config constants
+        const CHANNEL_NAME = 'session-check';
+        const TYPE_PUBLIC_KEY = 'public-key';
+        const TYPE_ALREADY_OPEN = 'already-open';
+
+        // Set up new BroadcastChannel
+        const channel = new BroadcastChannel(CHANNEL_NAME);
+
+        // Register a message handler
+        channel.onmessage = (event: MessageEvent) => {
+            const message = JSON.parse(event.data);
+            switch (message.type) {
+                case TYPE_PUBLIC_KEY:
+                    // Another tab is trying to connect to a session.
+                    // Is it the same public key as the one we are using?
+                    if (message.key === publicKeyHex
+                            && (this.stateService.connectionBuildupState === 'loading'
+                             || this.stateService.connectionBuildupState === 'done')) {
+                        // Yes it is, notify them that the session is already active
+                        this.$log.debug(
+                            this.logTag,
+                            'Another tab is trying to connect to our session. Respond with a broadcast.',
+                        );
+                        channel.postMessage(JSON.stringify({
+                            type: TYPE_ALREADY_OPEN,
+                            key: publicKeyHex,
+                        }));
+                    }
+                    break;
+                case TYPE_ALREADY_OPEN:
+                    // Another tab notified us that the session we're trying to connect to
+                    // is already active.
+                    if (message.key === publicKeyHex && this.stateService.connectionBuildupState !== 'done') {
+                        this.$log.error(this.logTag, 'Session already connected in another tab or window');
+                        this.timeoutService.register(() => {
+                            this.stateService.updateConnectionBuildupState('already_connected');
+                            this.stateService.state = GlobalConnectionState.Error;
+                        }, 500, true, 'alreadyConnected');
+                    }
+                    break;
+                default:
+                    this.$log.warn(this.logTag, 'Unknown broadcast message type:', message.type);
+                    break;
+            }
+        };
+
+        // Notify other tabs that we're trying to connect
+        this.$log.debug(this.logTag, 'Checking if the session is already open in another tab or window');
+        channel.postMessage(JSON.stringify({
+            type: TYPE_PUBLIC_KEY,
+            key: publicKeyHex,
+        }));
+    }
+
+    /**
+     * Reconnect using a specific keypair and the decrypted data from the trusted keystore.
+     */
+    private reconnect(keyStore: saltyrtc.KeyStore, decrypted: threema.TrustedKeyStoreData): void {
+        // Reset state
+        this.webClientService.stop({
+            reason: DisconnectReason.SessionStopped,
+            send: false,
+            close: 'welcome',
+            connectionBuildupState: this.stateService.connectionBuildupState,
+        });
+
+        // Initialize push service
+        if (decrypted.pushToken !== null && decrypted.pushTokenType !== null) {
+            this.webClientService.updatePushToken(decrypted.pushToken, decrypted.pushTokenType);
+            this.pushService.init(decrypted.pushToken, decrypted.pushTokenType);
+        }
+
+        // Initialize webclient service
+        this.webClientService.init({
+            keyStore: keyStore,
+            peerTrustedKey: decrypted.peerPublicKey,
+            resume: false,
+        });
+
         this.start();
     }
 
     /**
-     * Show the "decryption failed" dialog.
+     * Show a browser warning dialog.
      */
     private showBrowserWarning(): void {
-        const confirm = this.$mdDialog.confirm()
-            .title(this.$translate.instant('welcome.BROWSER_NOT_SUPPORTED'))
-            .htmlContent(this.$translate.instant('welcome.BROWSER_NOT_SUPPORTED_DETAILS'))
-            .ok(this.$translate.instant('welcome.CONTINUE_ANYWAY'))
-            .cancel(this.$translate.instant('welcome.ABORT'));
-        this.$mdDialog.show(confirm).then(() => {
-            // do nothing
-        }, () => {
-            // Redirect to Threema website
-            window.location.replace('https://threema.ch/');
+        this.browserWarningShown = true;
+        this.$translate.onReady().then(() => {
+            const confirm = this.$mdDialog.confirm()
+                .title(this.$translate.instant('welcome.BROWSER_NOT_SUPPORTED'))
+                .htmlContent(this.$translate.instant('welcome.BROWSER_NOT_SUPPORTED_DETAILS'))
+                .ok(this.$translate.instant('welcome.CONTINUE_ANYWAY'))
+                .cancel(this.$translate.instant('welcome.ABORT'));
+            this.$mdDialog.show(confirm).then(() => {
+                // do nothing
+            }, () => {
+                // Redirect to Threema website
+                window.location.replace('https://threema.ch/threema-web');
+            });
+        });
+    }
+
+    /**
+     * Show a dialog indicating that local storage is not available.
+     */
+    private showLocalStorageWarning(): void {
+        this.$translate.onReady().then(() => {
+            const confirm = this.$mdDialog.alert()
+                .title(this.$translate.instant('common.ERROR'))
+                .htmlContent(this.$translate.instant('welcome.LOCAL_STORAGE_MISSING_DETAILS'))
+                .ok(this.$translate.instant('common.OK'));
+            this.$mdDialog.show(confirm);
+        });
+    }
+
+    /**
+     * Show a dialog indicating that local storage cannot be accessed.
+     */
+    private showLocalStorageException(e: Error): void {
+        this.$translate.onReady().then(() => {
+            const confirm = this.$mdDialog.alert()
+                .title(this.$translate.instant('common.ERROR'))
+                .htmlContent(this.$translate.instant('welcome.LOCAL_STORAGE_EXCEPTION_DETAILS', {
+                    errorMsg: e.name,
+                }))
+                .ok(this.$translate.instant('common.OK'));
+            this.$mdDialog.show(confirm);
         });
     }
 
@@ -265,6 +473,19 @@ class WelcomeController {
     }
 
     /**
+     * Show the "already connected" dialog.
+     */
+    private showAlreadyConnected(): void {
+        this.$translate.onReady().then(() => {
+            const confirm = this.$mdDialog.alert()
+                .title(this.$translate.instant('welcome.ALREADY_CONNECTED'))
+                .htmlContent(this.$translate.instant('welcome.ALREADY_CONNECTED_DETAILS'))
+                .ok(this.$translate.instant('common.OK'));
+            this.$mdDialog.show(confirm);
+        });
+    }
+
+    /**
      * Forget trusted keys.
      */
     private deleteSession(ev) {
@@ -276,21 +497,17 @@ class WelcomeController {
              .cancel(this.$translate.instant('common.CANCEL'));
 
         this.$mdDialog.show(confirm).then(() =>  {
-            // Force-stop the webclient
-            const deleteStoredData = true;
-            const resetPush = true;
-            const redirect = false;
-            this.webClientService.stop(true, deleteStoredData, resetPush, redirect);
-
-            // Reset state
-            this.stateService.updateConnectionBuildupState('new');
-
             // Go back to scan mode
             this.mode = 'scan';
             this.password = '';
+            this.formLocked = false;
 
-            // Initiate scan
-            this.scan();
+            // Force-stop the webclient and initiate scan
+            this.scan({
+                reason: DisconnectReason.SessionDeleted,
+                send: true,
+                close: 'welcome',
+            });
         }, () => {
             // do nothing
         });
@@ -326,7 +543,7 @@ class WelcomeController {
         } else if (len <= 586) {
             version = 16;
         } else {
-            this.$log.error('QR Code payload too large: Is your SaltyRTC host string huge?');
+            this.$log.error(this.logTag, 'QR Code payload too large: Is your SaltyRTC host string huge?');
             version = 40;
         }
         return {
@@ -343,33 +560,57 @@ class WelcomeController {
      * It must be initialized before calling this method.
      */
     private start() {
-        // Start
         this.webClientService.start().then(
+            // If connection buildup is done...
             () => {
                 // Pass password to webclient service
                 this.webClientService.setPassword(this.password);
 
                 // Clear local password variable
                 this.password = '';
+                this.formLocked = false;
 
                 // Redirect to home
-                this.$timeout(() => this.$state.go('messenger.home'), WelcomeController.REDIRECT_DELAY);
+                this.timeoutService.register(
+                    () => this.$state.go('messenger.home'),
+                    WelcomeController.REDIRECT_DELAY,
+                    true,
+                    'redirectToHome',
+                );
             },
+
+            // If an error occurs...
             (error) => {
-                this.$log.error('Error state:', error);
+                this.$log.error(this.logTag, 'Error state:', error);
                 // TODO: should probably show an error message instead
-                this.$timeout(() => this.$state.reload(), WelcomeController.REDIRECT_DELAY);
+                this.timeoutService.register(
+                    () => this.$state.reload(),
+                    WelcomeController.REDIRECT_DELAY,
+                    true,
+                    'reloadStateError',
+                );
+            },
+
+            // State updates
+            (progress: threema.ConnectionBuildupStateChange) => {
+                // Do nothing
             },
         );
+    }
+
+    /**
+     * Reload the page.
+     */
+    public reload() {
+        this.$window.location.reload();
     }
 }
 
 angular.module('3ema.welcome', [])
 
-.config(['$stateProvider', ($stateProvider: ng.ui.IStateProvider) => {
+.config(['$stateProvider', ($stateProvider: UiStateProvider) => {
 
     $stateProvider
-
         .state('welcome', {
             url: '/welcome',
             templateUrl: 'partials/welcome.html',

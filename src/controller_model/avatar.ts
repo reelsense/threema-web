@@ -15,26 +15,34 @@
  * along with Threema Web. If not, see <http://www.gnu.org/licenses/>.
  */
 
-export class AvatarControllerModel implements threema.AvatarControllerModel {
+import {hasValue} from '../helpers';
+import {WebClientService} from '../services/webclient';
+
+export class AvatarControllerModel {
+    private logTag: string = '[AvatarControllerModel]';
+
     private $log: ng.ILogService;
-    private avatar: ArrayBuffer = null;
-    private loadAvatar: Promise<string>;
-    public onChangeAvatar: (image: ArrayBuffer) => void;
+    private avatar: ArrayBuffer | null = null;
+    private loadAvatar: Promise<ArrayBuffer | null>;
+    private onChangeAvatar: (image: ArrayBuffer) => void;
+    private _avatarChanged: boolean = false;
 
     constructor($log: ng.ILogService,
-                webClientService: threema.WebClientService,
-                receiver: threema.Receiver) {
+                webClientService: WebClientService,
+                receiver: threema.Receiver | null) {
         this.$log = $log;
         this.loadAvatar = new Promise((resolve, reject) => {
-            if (receiver === null) {
+            if (!hasValue(receiver)) {
+                $log.debug(this.logTag, 'loadAvatar: No receiver defined, no avatar');
                 resolve(null);
                 return;
-            }
-            if (receiver.avatar.high === undefined) {
+            } else if (!hasValue(receiver.avatar) || !hasValue(receiver.avatar.high)) {
+                $log.debug(this.logTag, 'loadAvatar: Requesting high res avatar from app');
                 webClientService.requestAvatar(receiver, true)
-                    .then((image: string) => resolve(image))
-                    .catch(() => reject());
+                    .then((data: ArrayBuffer) => resolve(data))
+                    .catch((error) => reject(error));
             } else {
+                $log.debug(this.logTag, 'loadAvatar: Returning cached version');
                 resolve(receiver.avatar.high);
             }
         });
@@ -42,10 +50,25 @@ export class AvatarControllerModel implements threema.AvatarControllerModel {
         // bind to the editor
         this.onChangeAvatar = (image: ArrayBuffer) => {
             this.avatar = image;
+            this._avatarChanged = true;
         };
     }
 
+    /**
+     * Return the avatar bytes (or null if no avatar is defined).
+     */
     public getAvatar(): ArrayBuffer | null {
         return this.avatar;
+    }
+
+    /**
+     * Return whether this avatar was changed.
+     *
+     * This will return true if an avatar was added or removed. It does not
+     * actually look at the content to determine whether the bytes of the
+     * avatar really changed.
+     */
+    public get avatarChanged(): boolean {
+        return this._avatarChanged;
     }
 }

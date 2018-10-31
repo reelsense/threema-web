@@ -15,30 +15,51 @@
  * along with Threema Web. If not, see <http://www.gnu.org/licenses/>.
  */
 
+import {isActionTrigger} from '../helpers';
+import {BrowserService} from '../services/browser';
+import {StringService} from '../services/string';
+import {TimeoutService} from '../services/timeout';
+
 /**
  * The compose area where messages are written.
  */
 export default [
     'BrowserService',
-    '$window',
+    'StringService',
+    'TimeoutService',
     '$timeout',
     '$translate',
+    '$mdDialog',
     '$filter',
     '$log',
-    function(browserService: threema.BrowserService,
-             $window, $timeout: ng.ITimeoutService,
+    '$rootScope',
+    function(browserService: BrowserService,
+             stringService: StringService,
+             timeoutService: TimeoutService,
+             $timeout: ng.ITimeoutService,
              $translate: ng.translate.ITranslateService,
+             $mdDialog: ng.material.IDialogService,
              $filter: ng.IFilterService,
-             $log: ng.ILogService) {
+             $log: ng.ILogService,
+             $rootScope: ng.IRootScopeService) {
         return {
             restrict: 'EA',
             scope: {
+                // Callback to submit text or file data
                 submit: '=',
+
+                // Callbacks to update typing information
                 startTyping: '=',
                 stopTyping: '=',
                 onTyping: '=',
-                draft: '=',
+                onKeyDown: '=',
+
+                // Reference to initial text and draft
+                initialData: '=',
+
+                // Callback that is called when uploading files
                 onUploading: '=',
+                maxTextLength: '=',
             },
             link(scope: any, element) {
                 // Logging
@@ -57,17 +78,25 @@ export default [
                 const fileTrigger: any = angular.element(element[0].querySelector('i.file-trigger'));
                 const fileInput: any = angular.element(element[0].querySelector('input.file-input'));
 
-                // Restore drafts
-                if (scope.draft !== undefined) {
-                    composeDiv[0].innerText = scope.draft;
+                // Set initial text
+                if (scope.initialData.initialText) {
+                    composeDiv[0].innerText = scope.initialData.initialText;
+                    scope.initialData.initialText = '';
+                } else if (scope.initialData.draft !== undefined) {
+                    composeDiv[0].innerText = scope.initialData.draft;
                 }
 
-                let caretPosition: {from?: number, to?: number} = null;
+                let caretPosition: {
+                    from?: number,
+                    to?: number,
+                    fromBytes?: number,
+                    toBytes?: number,
+                } = null;
 
                 /**
                  * Stop propagation of click events and hold htmlElement of the emojipicker
                  */
-                let EmoijPickerContainer = (function(){
+                const EmojiPickerContainer = (function() {
                     let instance;
 
                     function click(e) {
@@ -96,79 +125,209 @@ export default [
                     };
                 })();
 
+                // Typing events
+                let stopTypingTimer: ng.IPromise<void> = null;
+                function stopTyping() {
+                    // We can only stop typing of the timer is set (meaning
+                    // that we started typing earlier)
+                    if (stopTypingTimer !== null) {
+                        // Cancel timer
+                        timeoutService.cancel(stopTypingTimer);
+                        stopTypingTimer = null;
+
+                        // Send stop typing message
+                        scope.stopTyping();
+                    }
+                }
+                function startTyping() {
+                    if (stopTypingTimer === null) {
+                        // If the timer wasn't set previously, we just
+                        // started typing!
+                        scope.startTyping();
+                    } else {
+                        // Cancel timer, we'll re-create it
+                        timeoutService.cancel(stopTypingTimer);
+                    }
+
+                    // Define a timeout to send the stopTyping event
+                    stopTypingTimer = timeoutService.register(stopTyping, 10000, true, 'stopTyping');
+                }
+
+                // Process a DOM node recursively and extract text from compose area.
+                function getText(trim = true) {
+                    let text = '';
+                    const visitChildNodes = (parentNode: HTMLElement) => {
+                        // When pressing shift-enter and typing more text:
+                        //
+                        // - Firefox and chrome insert a <br> between two text nodes
+                        // - Safari creates two <div>s without any line break in between
+                        //   (except for the first line, which stays plain text)
+                        //
+                        // Thus, for Safari, we need to detect <div>s and insert a newline.
+
+                        // tslint:disable-next-line: prefer-for-of (see #98)
+                        for (let i = 0; i < parentNode.childNodes.length; i++) {
+                            const node = parentNode.childNodes[i] as HTMLElement;
+                            switch (node.nodeType) {
+                                case Node.TEXT_NODE:
+                                    // Append text, but strip leading and trailing newlines
+                                    text += node.nodeValue.replace(/(^[\r\n]*|[\r\n]*$)/g, '');
+                                    break;
+                                case Node.ELEMENT_NODE:
+                                    const tag = node.tagName.toLowerCase();
+                                    if (tag === 'div') {
+                                        text += '\n';
+                                        visitChildNodes(node);
+                                        break;
+                                    } else if (tag === 'img') {
+                                        text += (node as HTMLImageElement).alt;
+                                        break;
+                                    } else if (tag === 'br') {
+                                        text += '\n';
+                                        break;
+                                    } else if (tag === 'span' && node.hasAttribute('text')) {
+                                        text += node.getAttributeNode('text').value;
+                                        break;
+                                    }
+                                default:
+                                    $log.warn(logTag, 'Unhandled node:', node);
+                            }
+                        }
+                    };
+                    visitChildNodes(composeDiv[0]);
+                    return trim ? text.trim() : text;
+                }
+
+                // Determine whether field is empty
+                function composeAreaIsEmpty() {
+                    return getText().length === 0;
+                }
+
                 // Submit the text from the compose area.
                 //
                 // Emoji images are converted to their alt text in this process.
-                function submitText() {
-                    let text = '';
-                    for (let node of composeDiv[0].childNodes) {
-                        switch (node.nodeType) {
-                            case Node.TEXT_NODE:
-                                text += node.nodeValue;
-                                break;
-                            case Node.ELEMENT_NODE:
-                                const tag = node.tagName.toLowerCase();
-                                if (tag === 'img') {
-                                    text += node.alt;
-                                    break;
-                                } else if (tag === 'br') {
-                                    text += '\n';
-                                    break;
-                                }
-                            default:
-                                $log.warn(logTag, 'Unhandled node:', node);
+                function submitText(): Promise<any> {
+                    const text = getText();
+
+                    return new Promise((resolve, reject) => {
+                        const submitTexts = (strings: string[]) => {
+                            const messages: threema.TextMessageData[] = [];
+                            for (const piece of strings) {
+                                messages.push({
+                                    text: piece,
+                                });
+                            }
+
+                            scope.submit('text', messages)
+                                .then(resolve)
+                                .catch(reject);
+                        };
+
+                        const fullText = text.trim().replace(/\r/g, '');
+                        if (fullText.length > scope.maxTextLength) {
+                            const pieces: string[] = stringService.byteChunk(fullText, scope.maxTextLength, 50);
+                            const confirm = $mdDialog.confirm()
+                                .title($translate.instant('messenger.MESSAGE_TOO_LONG_SPLIT_SUBJECT'))
+                                .textContent($translate.instant('messenger.MESSAGE_TOO_LONG_SPLIT_BODY', {
+                                    max: scope.maxTextLength,
+                                    count: pieces.length,
+                                }))
+                                .ok($translate.instant('common.YES'))
+                                .cancel($translate.instant('common.NO'));
+
+                            $mdDialog.show(confirm).then(function() {
+                                submitTexts(pieces);
+                            }, () => {
+                                reject();
+                            });
+                        } else {
+                            submitTexts([fullText]);
                         }
-                    }
-                    const textMessageData: threema.TextMessageData = {text: text.trim()};
-                    // send as array
-                    return scope.submit('text', [textMessageData]);
+                    });
                 }
 
                 function sendText(): boolean {
-                    if  (composeDiv[0].innerHTML.length > 0) {
-                        const submitted = submitText();
-                        if (submitted) {
+                    if (!composeAreaIsEmpty()) {
+                        submitText().then(() => {
                             // Clear compose div
                             composeDiv[0].innerText = '';
+                            composeDiv[0].focus();
 
                             // Send stopTyping event
-                            scope.stopTyping();
+                            stopTyping();
 
+                            // Clear draft
                             scope.onTyping('');
-                        }
 
-                        updateView();
-                        return submitted;
+                            updateView();
+                        }).catch(() => {
+                            // do nothing
+                            $log.warn(logTag, 'Failed to submit text');
+                        });
+
+                        return true;
                     }
                     return false;
                 }
 
                 // Handle typing events
-                function onTyping(ev: KeyboardEvent): void {
+                function onKeyDown(ev: KeyboardEvent): void {
                     // If enter is pressed, prevent default event from being dispatched
-                    if (!ev.shiftKey && ev.which === 13) {
+                    if (!ev.shiftKey && ev.key === 'Enter') {
                         ev.preventDefault();
+                    }
+
+                    // If the keydown is handled and aborted outside
+                    if (scope.onKeyDown && scope.onKeyDown(ev) !== true) {
+                        ev.preventDefault();
+                        return;
                     }
 
                     // At link time, the element is not yet evaluated.
                     // Therefore add following code to end of event loop.
                     $timeout(() => {
                         // Shift + enter to insert a newline. Enter to send.
-                        if (!ev.shiftKey && ev.which === 13) {
+                        if (!ev.shiftKey && ev.key === 'Enter') {
                             if (sendText()) {
                                 return;
                             }
                         }
 
-                        // Update typing information
-                        if (composeDiv[0].innerText.length === 0) {
-                            scope.stopTyping();
-                        } else {
-                            scope.startTyping(composeDiv[0].innerText);
+                        updateView();
+                    }, 0);
+                }
+
+                function onKeyUp(ev: KeyboardEvent): void {
+                    // At link time, the element is not yet evaluated.
+                    // Therefore add following code to end of event loop.
+                    $timeout(() => {
+                        // If the compose area contains only a single <br>, make it fully empty.
+                        // See also: https://stackoverflow.com/q/14638887/284318
+                        const text = getText(false);
+                        if (text === '\n') {
+                            composeDiv[0].innerText = '';
+                        } else if (ev.keyCode === 190 && caretPosition !== null) {
+                            // A ':' is pressed, try to parse
+                            const currentWord = stringService.getWord(text, caretPosition.fromBytes, [':']);
+                            if (currentWord.realLength > 2
+                                && currentWord.word.substr(0, 1) === ':') {
+                                const unicodeEmoji = emojione.shortnameToUnicode(currentWord.word);
+                                if (unicodeEmoji && unicodeEmoji !== currentWord.word) {
+                                    return insertEmoji(unicodeEmoji,
+                                        caretPosition.from - currentWord.realLength,
+                                        caretPosition.to);
+                                }
+                            }
                         }
 
-                        // Notify about typing event
-                        scope.onTyping(composeDiv[0].innerText);
+                        // Update typing information (use text instead method)
+                        if (text.trim().length === 0 || caretPosition === null) {
+                            stopTyping();
+                            scope.onTyping('');
+                        } else {
+                            startTyping();
+                            scope.onTyping(text.trim(), stringService.getWord(text, caretPosition.from));
+                        }
 
                         updateView();
                     }, 0);
@@ -178,28 +337,28 @@ export default [
                 // Resolve to ArrayBuffer or reject to ErrorEvent.
                 function fetchFileListContents(fileList: FileList): Promise<Map<File, ArrayBuffer>> {
                     return new Promise((resolve) => {
-                        let buffers = new Map<File, ArrayBuffer>();
-                        let next = (file: File, res: ArrayBuffer | null, error: any) => {
+                        const buffers = new Map<File, ArrayBuffer>();
+                        const fileCounter = fileList.length;
+                        const next = (file: File, res: ArrayBuffer | null, error: any) => {
                             buffers.set(file, res);
-                            if (buffers.size >= fileList.length) {
+                            if (buffers.size >= fileCounter) {
                                resolve(buffers);
                             }
                         };
-
-                        for (let n = 0; n < fileList.length; n++) {
+                        for (let n = 0; n < fileCounter; n++) {
                             const reader = new FileReader();
                             const file = fileList.item(n);
-                            reader.onload = (ev: Event) => {
-                                next(file, (ev.target as FileReader).result, ev);
+                            reader.onload = function(ev: FileReaderProgressEvent) {
+                                next(file, ev.target.result, ev);
                             };
-                            reader.onerror = (ev: ErrorEvent) => {
+                            reader.onerror = function(ev: FileReaderProgressEvent) {
                                 // set a null object
                                 next(file, null, ev);
                             };
-                            reader.onprogress = function(data) {
-                                if (data.lengthComputable) {
-                                    let progress = ((data.loaded / data.total) * 100);
-                                    scope.onUploading(true, progress, 100 / fileList.length * n);
+                            reader.onprogress = function(ev: FileReaderProgressEvent) {
+                                if (ev.lengthComputable) {
+                                    const progress = ((ev.loaded / ev.total) * 100);
+                                    scope.onUploading(true, progress, 100 / fileCounter * n);
                                 }
                             };
                             reader.readAsArrayBuffer(file);
@@ -210,7 +369,7 @@ export default [
                 function uploadFiles(fileList: FileList): void {
                     scope.onUploading(true, 0, 0);
                     fetchFileListContents(fileList).then((data: Map<File, ArrayBuffer>) => {
-                        let fileMessages = [];
+                        const fileMessages = [];
                         data.forEach((buffer, file) => {
                             const fileMessageData: threema.FileMessageData = {
                                 name: file.name,
@@ -218,9 +377,19 @@ export default [
                                 size: file.size,
                                 data: buffer,
                             };
+
+                            // Workaround for https://bugzilla.mozilla.org/show_bug.cgi?id=1240259
+                            if (browserService.getBrowser().isFirefox(false)) {
+                                if (fileMessageData.name.endsWith('.ogg') && fileMessageData.fileType === 'video/ogg') {
+                                    fileMessageData.fileType = 'audio/ogg';
+                                }
+                            }
+
                             fileMessages.push(fileMessageData);
                         });
-                        scope.submit('file', fileMessages);
+                        scope
+                            .submit('file', fileMessages)
+                            .catch((msg) => $log.error('Could not send file:', msg));
                         scope.onUploading(false);
 
                     }).catch((ev: ErrorEvent) => {
@@ -228,26 +397,89 @@ export default [
                     });
                 }
 
-                function applyFilters(text: string): string {
-                    const emojify = $filter('emojify') as (a: string, b?: boolean) => string;
-                    return emojify(text, true);
-                }
-
                 // Handle pasting
-                // Source: http://stackoverflow.com/a/36846308/284318
                 function onPaste(ev: ClipboardEvent) {
                     ev.preventDefault();
-                    const text = ev.clipboardData.getData('text/plain');
-                    let formatted = applyFilters(text);
 
-                    // replace newlines with html br
-                    const parseNewLine = $filter('writeNewLine') as (a: string, b?: boolean) => string;
-                    formatted = parseNewLine(formatted, true);
+                    // If no clipboard data is available, do nothing.
+                    if (!ev.clipboardData) {
+                        return;
+                    }
 
-                    document.execCommand('insertHTML', false, formatted);
+                    // Extract pasted items
+                    const items: DataTransferItemList = ev.clipboardData.items;
+                    if (!items) {
+                        return;
+                    }
 
-                    cleanupComposeContent();
-                    updateView();
+                    // Find available types
+                    let fileIdx: number | null = null;
+                    let textIdx: number | null = null;
+                    for (let i = 0; i < items.length; i++) {
+                        if (items[i].type.indexOf('image/') !== -1 || items[i].type === 'application/x-moz-file') {
+                            fileIdx = i;
+                        } else if (items[i].type === 'text/plain') {
+                            textIdx = i;
+                        }
+                    }
+
+                    // Handle pasting of files
+                    if (fileIdx !== null) {
+                        // Read clipboard data as blob
+                        const blob: Blob = items[fileIdx].getAsFile();
+
+                        // Convert blob to arraybuffer
+                        const reader = new FileReader();
+                        reader.onload = function(progressEvent: FileReaderProgressEvent) {
+                            const buffer: ArrayBuffer = this.result;
+
+                            // Construct file name
+                            let fileName: string;
+                            if ((blob as any).name) {
+                                fileName = (blob as any).name;
+                            } else if (blob.type && blob.type.match(/^[^;]*\//) !== null) {
+                                const fileExt = blob.type.split(';')[0].split('/')[1];
+                                fileName = 'clipboard.' + fileExt;
+                            } else {
+                                $log.warn(logTag, 'Pasted file has an invalid MIME type: "' + blob.type + '"');
+                                return;
+                            }
+
+                            // Send data as file
+                            const fileMessageData: threema.FileMessageData = {
+                                name: fileName,
+                                fileType: blob.type,
+                                size: blob.size,
+                                data: buffer,
+                            };
+                            scope
+                                .submit('file', [fileMessageData])
+                                .catch((msg) => $log.error('Could not send file:', msg));
+                        };
+                        reader.readAsArrayBuffer(blob);
+
+                    // Handle pasting of text
+                    } else if (textIdx !== null) {
+                        const text = ev.clipboardData.getData('text/plain');
+
+                        // Look up some filter functions
+                        const escapeHtml = $filter('escapeHtml') as (a: string) => string;
+                        const emojify = $filter('emojify') as (a: string, b?: boolean) => string;
+                        const mentionify = $filter('mentionify') as (a: string) => string;
+                        const nlToBr = $filter('nlToBr') as (a: string, b?: boolean) => string;
+
+                        // Escape HTML markup
+                        const escaped = escapeHtml(text);
+
+                        // Apply filters (emojify, convert newline, etc)
+                        const formatted = nlToBr(mentionify(emojify(escaped, true)), true);
+
+                        // Insert resulting HTML
+                        document.execCommand('insertHTML', false, formatted);
+
+                        cleanupComposeContent();
+                        updateView();
+                    }
                 }
 
                 // Translate placeholder texts
@@ -258,7 +490,7 @@ export default [
 
                 // Show emoji picker element
                 function showEmojiPicker() {
-                    const emojiPicker: HTMLElement = EmoijPickerContainer.get().htmlElement;
+                    const emojiPicker: HTMLElement = EmojiPickerContainer.get().htmlElement;
 
                     // Show
                     emojiKeyboard.addClass('active');
@@ -284,15 +516,15 @@ export default [
 
                     // Find all emoji
                     const allEmoji: any = angular.element(
-                        EmoijPickerContainer.get().htmlElement.querySelectorAll('.content .e1'));
+                        EmojiPickerContainer.get().htmlElement.querySelectorAll('.content .e1'));
 
                     // Remove event handlers
                     allEmoji.off('click', onEmojiChosen);
-                    EmoijPickerContainer.destroy();
+                    EmojiPickerContainer.destroy();
                 }
 
                 // Emoji trigger is clicked
-                function onEmojiTrigger(ev: MouseEvent): void {
+                function onEmojiTrigger(ev: UIEvent): void {
                     ev.stopPropagation();
                     // Toggle visibility of picker
                     if (emojiKeyboard.hasClass('active')) {
@@ -305,61 +537,95 @@ export default [
                 // Emoji is chosen
                 function onEmojiChosen(ev: MouseEvent): void {
                     ev.stopPropagation();
-                    const emoji = this.textContent; // Unicode character
-                    const formatted = applyFilters(emoji);
+                    insertEmoji (this.textContent);
+                }
 
-                    // Firefox inserts a <br> after editing content editable fields.
-                    // Remove the last <br> to fix this.
+                function insertEmoji(emoji, posFrom = null, posTo = null): void {
+                    const emojiElement = ($filter('emojify') as any)(emoji, true, true) as string;
+                    insertHTMLElement(emoji, emojiElement, posFrom, posTo);
+                }
+
+                function insertMention(mentionString, posFrom = null, posTo = null): void {
+                    const mentionElement = ($filter('mentionify') as any)(mentionString) as string;
+                    insertHTMLElement(mentionString, mentionElement, posFrom, posTo);
+                }
+
+                function insertHTMLElement(original: string, formatted: string, posFrom = null, posTo = null): void {
+
+                    // In Chrome in right-to-left mode, our content editable
+                    // area may contain a DIV element.
+                    const childNodes = composeDiv[0].childNodes;
+                    const nestedDiv = childNodes.length === 1
+                        && childNodes[0].tagName !== undefined
+                        && childNodes[0].tagName.toLowerCase() === 'div';
+                    let contentElement;
+                    if (nestedDiv === true) {
+                        contentElement = composeDiv[0].childNodes[0];
+                    } else {
+                        contentElement = composeDiv[0];
+                    }
+
                     let currentHTML = '';
-                    composeDiv[0].childNodes.forEach((node: Node|any, pos: number) => {
+                    for (let i = 0; i < contentElement.childNodes.length; i++) {
+                        const node = contentElement.childNodes[i];
+
                         if (node.nodeType === node.TEXT_NODE) {
                             currentHTML += node.textContent;
                         } else if (node.nodeType === node.ELEMENT_NODE) {
-                            let tag = node.tagName.toLowerCase();
-                            if (tag === 'img') {
+                            const tag = node.tagName.toLowerCase();
+                            if (tag === 'img' || tag === 'span') {
                                 currentHTML += getOuterHtml(node);
                             } else if (tag === 'br') {
-                                // not not append br if the br is the LAST element
-                                if (pos < composeDiv[0].childNodes.length - 1) {
+                                // Firefox inserts a <br> after editing content editable fields.
+                                // Remove the last <br> to fix this.
+                                if (i < contentElement.childNodes.length - 1) {
                                     currentHTML += getOuterHtml(node);
                                 }
                             }
                         }
-                    });
+                    }
 
                     if (caretPosition !== null) {
-                        currentHTML = currentHTML.substr(0, caretPosition.from)
+                        posFrom = null === posFrom ? caretPosition.from : posFrom;
+                        posTo = null === posTo ? caretPosition.to : posTo;
+                        currentHTML = currentHTML.substr(0, posFrom)
                             + formatted
-                            + currentHTML.substr(caretPosition.to);
+                            + currentHTML.substr(posTo);
 
                         // change caret position
-                        caretPosition.from += formatted.length - 1;
-                        caretPosition.to = caretPosition.from;
+                        caretPosition.from += formatted.length;
+                        caretPosition.fromBytes += original.length;
+                        posFrom += formatted.length;
                     } else {
                         // insert at the end of line
+                        posFrom = currentHTML.length;
                         currentHTML += formatted;
                         caretPosition = {
                             from: currentHTML.length,
-                            to: currentHTML.length,
                         };
                     }
+                    caretPosition.to = caretPosition.from;
+                    caretPosition.toBytes = caretPosition.fromBytes;
 
-                    composeDiv[0].innerHTML = currentHTML;
+                    contentElement.innerHTML = currentHTML;
                     cleanupComposeContent();
-                    setCaretPosition(caretPosition.from);
+                    setCaretPosition(posFrom);
+
+                    // Update the draft text
+                    scope.onTyping(getText());
 
                     updateView();
                 }
 
                 // File trigger is clicked
-                function onFileTrigger(ev: MouseEvent): void {
+                function onFileTrigger(ev: UIEvent): void {
                     ev.preventDefault();
                     ev.stopPropagation();
                     const input = element[0].querySelector('.file-input') as HTMLInputElement;
                     input.click();
                 }
 
-                function onSendTrigger(ev: MouseEvent): boolean {
+                function onSendTrigger(ev: UIEvent): boolean {
                     ev.preventDefault();
                     ev.stopPropagation();
                     return sendText();
@@ -373,11 +639,14 @@ export default [
 
                 // Disable content editable and dragging for contained images (emoji)
                 function cleanupComposeContent() {
-                    for (let img of composeDiv[0].getElementsByTagName('img')) {
+                    for (const img of composeDiv[0].getElementsByTagName('img')) {
                         img.ondragstart = () => false;
                     }
+                    for (const span of composeDiv[0].getElementsByTagName('span')) {
+                        span.setAttribute('contenteditable', false);
+                    }
 
-                    if (browserService.getBrowser().firefox) {
+                    if (browserService.getBrowser().isFirefox(false)) {
                         // disable object resizing is the only way to disable resizing of
                         // emoji (contenteditable must be true, otherwise the emoji can not
                         // be removed with backspace (in FF))
@@ -387,7 +656,7 @@ export default [
 
                 // Set all correct styles
                 function updateView() {
-                    if (composeDiv[0].innerHTML.length === 0) {
+                    if (composeAreaIsEmpty()) {
                         sendTrigger.removeClass(TRIGGER_ENABLED_CSS_CLASS);
                     } else {
                         sendTrigger.addClass(TRIGGER_ENABLED_CSS_CLASS);
@@ -396,51 +665,66 @@ export default [
 
                 // return the outer html of a node element
                 function getOuterHtml(node: Node): string {
-                    let pseudoElement = document.createElement('pseudo');
-                    pseudoElement.appendChild(node.cloneNode());
+                    const pseudoElement = document.createElement('pseudo');
+                    pseudoElement.appendChild(node.cloneNode(true));
                     return pseudoElement.innerHTML;
                 }
 
                 // return the html code position of the container element
-                function getHTMLPosition(offset: number, container: Node) {
+                function getPositions(offset: number, container: Node): {html: number, text: number} {
                     let pos = null;
+                    let textPos = null;
+
                     if (composeDiv[0].contains(container)) {
                         let selectedElement;
                         if (container === composeDiv[0]) {
                             if (offset === 0) {
-                                return 0;
+                                return {
+                                    html: 0, text: 0,
+                                };
                             }
                             selectedElement = composeDiv[0].childNodes[offset - 1];
                             pos = 0;
+                            textPos = 0;
                         } else {
                             selectedElement =  container.previousSibling;
                             pos = offset;
+                            textPos = offset;
                         }
 
                         while (selectedElement !== null) {
                             if (selectedElement.nodeType === Node.TEXT_NODE) {
                                 pos += selectedElement.textContent.length;
+                                textPos += selectedElement.textContent.length;
                             } else {
                                 pos += getOuterHtml(selectedElement).length;
+                                textPos += 1;
                             }
                             selectedElement = selectedElement.previousSibling;
                         }
                     }
-                    return pos;
+                    return {
+                        html: pos,
+                        text: textPos,
+                    };
                 }
 
-                // define position of caret
+                // Update the current caret position or selection
                 function updateCaretPosition() {
                     caretPosition = null;
                     if (window.getSelection && composeDiv[0].innerHTML.length > 0) {
                         const selection = window.getSelection();
                         if (selection.rangeCount) {
                             const range = selection.getRangeAt(0);
-                            let from = getHTMLPosition(range.startOffset, range.startContainer);
-                            if (from !== null && from >= 0) {
+                            const from = getPositions(range.startOffset, range.startContainer);
+                            if (from !== null && from.html >= 0) {
+                                const to = getPositions(range.endOffset, range.endContainer);
+
                                 caretPosition = {
-                                    from: from,
-                                    to: getHTMLPosition(range.endOffset, range.endContainer),
+                                    from: from.html,
+                                    to: to.html,
+                                    fromBytes: from.text,
+                                    toBytes: to.text,
                                 };
                             }
                         }
@@ -450,21 +734,21 @@ export default [
                 // set the correct cart position in the content editable div, position
                 // is the position in the html content (not plain text)
                 function setCaretPosition(pos: number) {
-                    let rangeAt = (node: Node, offset?: number) => {
-                        let range = document.createRange();
+                    const rangeAt = (node: Node, offset?: number) => {
+                        const range = document.createRange();
                         range.collapse(false);
                         if (offset !== undefined) {
                             range.setStart(node, offset);
                         } else {
                             range.setStartAfter(node);
                         }
-                        let sel = window.getSelection();
+                        const sel = window.getSelection();
                         sel.removeAllRanges();
                         sel.addRange(range);
                     };
 
-                    for (let nodeIndex = 0; nodeIndex < composeDiv[0].childNodes.length; nodeIndex++) {
-                        let node = composeDiv[0].childNodes[nodeIndex];
+                    for (let i = 0; i < composeDiv[0].childNodes.length; i++) {
+                        const node = composeDiv[0].childNodes[i];
                         let size;
                         let offset;
                         switch (node.nodeType) {
@@ -482,8 +766,7 @@ export default [
                         if (pos < size) {
                             // use this node
                             rangeAt(node, offset);
-                            this.stop = true;
-                        } else if (nodeIndex === composeDiv[0].childNodes.length - 1) {
+                        } else if (i === composeDiv[0].childNodes.length - 1) {
                             rangeAt(node);
                         }
                         pos -= size;
@@ -491,41 +774,86 @@ export default [
                 }
 
                 // Handle typing events
-                composeDiv.on('keydown', onTyping);
+                composeDiv.on('keydown', onKeyDown);
+                composeDiv.on('keyup', onKeyUp);
                 composeDiv.on('keyup mouseup', updateCaretPosition);
                 composeDiv.on('selectionchange', updateCaretPosition);
-                // When switching chat, send stopTyping message
-                scope.$on('$destroy', scope.stopTyping);
 
                 // Handle paste event
                 composeDiv.on('paste', onPaste);
 
                 // Handle click on emoji trigger
                 emojiTrigger.on('click', onEmojiTrigger);
+                emojiTrigger.on('keypress', (ev: KeyboardEvent) => {
+                    if (isActionTrigger(ev)) {
+                        onEmojiTrigger(ev);
+                    }
+                });
 
                 // Handle click on file trigger
                 fileTrigger.on('click', onFileTrigger);
+                fileTrigger.on('keypress', (ev: KeyboardEvent) => {
+                    if (isActionTrigger(ev)) {
+                        onFileTrigger(ev);
+                    }
+                });
 
                 // Handle file uploads
                 fileInput.on('change', onFileSelected);
 
                 // Handle click on send trigger
                 sendTrigger.on('click', onSendTrigger);
+                sendTrigger.on('keypress', (ev: KeyboardEvent) => {
+                    if (isActionTrigger(ev)) {
+                        onSendTrigger(ev);
+                    }
+                });
 
                 updateView();
+
+                // Listen to broadcasts
+                const unsubscribeListeners = [];
+                unsubscribeListeners.push($rootScope.$on('onQuoted', (event: ng.IAngularEvent, args: any) => {
+                    composeDiv[0].focus();
+                }));
+
+                unsubscribeListeners.push($rootScope.$on('onMentionSelected', (event: ng.IAngularEvent, args: any) => {
+                    if (args.query && args.mention) {
+                        // Insert resulting HTML
+                        insertMention(args.mention, caretPosition ? caretPosition.to - args.query.length : null,
+                            caretPosition ?  caretPosition.to : null);
+                    }
+                }));
+
+                // When switching chat, send stopTyping message
+                scope.$on('$destroy', () => {
+                    unsubscribeListeners.forEach((u) => {
+                        // Unsubscribe
+                        u();
+                    });
+                    stopTyping();
+                });
             },
             // tslint:disable:max-line-length
             template: `
                 <div>
                     <div>
-                        <i class="md-primary emoji-trigger trigger is-enabled material-icons">tag_faces</i>
+                        <i class="md-primary emoji-trigger trigger is-enabled material-icons" role="button" aria-label="emoji" tabindex="0">tag_faces</i>
                     </div>
                     <div>
-                        <div class="compose" contenteditable translate translate-attr-data-placeholder="messenger.COMPOSE_MESSAGE"></div>
+                        <div
+                            class="compose"
+                            contenteditable
+                            autofocus
+                            translate
+                            translate-attr-data-placeholder="messenger.COMPOSE_MESSAGE"
+                            translate-attr-aria-label="messenger.COMPOSE_MESSAGE"
+                            tabindex="0"
+                        ></div>
                     </div>
                     <div>
-                        <i class="md-primary send-trigger trigger material-icons">send</i>
-                        <i class="md-primary file-trigger trigger is-enabled material-icons">attach_file</i>
+                        <i class="md-primary send-trigger trigger material-icons" role="button" aria-label="send" tabindex="0">send</i>
+                        <i class="md-primary file-trigger trigger is-enabled material-icons" role="button" aria-label="attach file" tabindex="0">attach_file</i>
                         <input class="file-input" type="file" style="visibility: hidden" multiple>
                     </div>
                 </div>

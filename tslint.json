@@ -9,6 +9,9 @@
         "object-literal-shorthand": false,
         "object-literal-sort-keys": false,
         "only-arrow-functions": false,
-        "quotemark": [true, "single", "avoid-escape"]
+        "quotemark": [true, "single", "avoid-escape"],
+        "indent": [true, "spaces"],
+        "whitespace": [true, "check-branch", "check-decl", "check-operator", "check-separator", "check-rest-spread", "check-type", "check-typecast", "check-type-operator", "check-preblock"],
+        "variable-name": [true, "ban-keywords", "check-format", "allow-leading-underscore", "allow-pascal-case"]
     }
 }

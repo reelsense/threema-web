@@ -2,29 +2,54 @@
 	<!-- information list card -->
 	<md-card class="two-row">
 		<div class="avatar">
-			<eee-avatar eee-type="'contact'"
-						eee-receiver="ctrl.receiver"
+			<eee-avatar eee-receiver="ctrl.receiver"
 						eee-resolution="'high'"></eee-avatar>
 		</div>
 		<md-card-content>
 			<dl class="key-values">
 				<dt>Threema ID</dt>
-				<dd>{{ctrl.receiver.id}}
-					<eee-verification-level
-							contact="ctrl.receiver">
-					</eee-verification-level></dd>
+				<dd>
+					<span class="complex-values">
+						<span>{{ctrl.receiver.id}}</span>
+						<span class="indicator-icon" ng-if="ctrl.showBlocked()"
+							  translate-attr="{'aria-label': 'messenger.THREEMA_BLOCKED_RECEIVER'}">
+								(<span translate>messenger.THREEMA_BLOCKED_RECEIVER</span>)
+						</span>
+						<span class="indicator-icon" ng-if="ctrl.isWorkReceiver"
+							  translate-attr="{'aria-label': 'messenger.THREEMA_WORK_CONTACT',
+								'title': 'messenger.THREEMA_WORK_CONTACT'}">
+								<img src="img/ic_work_round.svg" alt="Threema Work user">
+						</span>
+						<eee-verification-level contact="ctrl.receiver"></eee-verification-level>
+					</span>
+				</dd>
 
 				<dt><span translate>messenger.KEY_FINGERPRINT</span></dt>
-				<dd>{{ctrl.fingerPrint}}</dd>
+				<dd>{{ ctrl.fingerPrint.value || "Loading..." }}</dd>
+
+				<dt><span translate>messenger.NICKNAME</span></dt>
+				<dd ng-if="ctrl.receiver.publicNickname" ng-bind-html="ctrl.receiver.publicNickname | emojify"></dd>
+				<dd ng-if="!ctrl.receiver.publicNickname">-</dd>
 
 				<dt><span translate>messenger.FIRST_NAME</span></dt>
-				<dd>{{ctrl.receiver.firstName}}</dd>
+				<dd>{{ ctrl.receiver.firstName || "-" }}</dd>
 
 				<dt><span translate>messenger.LAST_NAME</span></dt>
-				<dd>{{ctrl.receiver.lastName}}</dd>
+				<dd>{{ ctrl.receiver.lastName || "-" }}</dd>
 			</dl>
 		</md-card-content>
 	</md-card>
+
+	<md-card>
+		<md-card-content>
+			<section layout="row" layout-sm="column" layout-align="center center" layout-wrap>
+				<md-button ng-disabled="!ctrl.controllerModel.canClean()" class="md-raised" ng-click="ctrl.controllerModel.clean($event)">
+					<span translate>messenger.DELETE_THREAD</span>
+				</md-button>
+			</section>
+		</md-card-content>
+	</md-card>
+
 	<!-- system contact list card -->
 	<md-card ng-if="ctrl.hasSystemEmails || ctrl.hasSystemPhones">
 		<md-card-title>
@@ -60,7 +85,7 @@
 		<md-card-content>
 			<ul class="group-list">
 				<li ng-repeat="groupReceiver in ctrl.inGroups">
-					<eee-group-badge eee-group-receiver="groupReceiver" eee-contact-receiver="ctrl.receiver"/>
+					<eee-group-badge class="linked" eee-group-receiver="groupReceiver" eee-contact-receiver="ctrl.receiver"/>
 				</li>
 			</ul>
 		</md-card-content>
@@ -76,7 +101,7 @@
 		<md-card-content>
 			<ul class="group-list">
 				<li ng-repeat="distributionListReceiver in ctrl.inDistributionLists">
-					<eee-distribution-list-badge eee-distribution-list-receiver="distributionListReceiver" eee-contact-receiver="ctrl.receiver"/>
+					<eee-distribution-list-badge eee-distribution-list-receiver="distributionListReceiver"/>
 				</li>
 			</ul>
 		</md-card-content>
